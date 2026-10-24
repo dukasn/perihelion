@@ -109,6 +109,18 @@ pub struct RunArgs {
     #[arg(long, help = "Override executable command")]
     pub exec: Option<String>,
 
+    #[arg(
+        long,
+        help = "Explicit path to Proton binary or installation directory"
+    )]
+    pub proton: Option<PathBuf>,
+
+    #[arg(long, help = "Explicit path to Wine prefix or compatdata directory")]
+    pub prefix: Option<PathBuf>,
+
+    #[arg(long, help = "Force direct native execution without Proton")]
+    pub native: bool,
+
     #[arg(last = true, help = "Arguments passed through to the game executable")]
     pub args: Vec<String>,
 }

@@ -515,19 +515,77 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
         .or(profile.default_executable)
         .unwrap_or_else(|| "echo 'No executable configured'".to_string());
 
+    let use_proton = !args.native
+        && (profile.steam_app_id.is_some()
+            || args.proton.is_some()
+            || args.prefix.is_some()
+            || exec_cmd.to_lowercase().ends_with(".exe"));
+
+    let proton_launch = if use_proton {
+        match peri_vfs::SteamDiscovery::resolve_proton_launch(
+            profile.steam_app_id,
+            args.proton.as_deref(),
+            args.prefix.as_deref(),
+        ) {
+            Ok(launch) => Some(launch),
+            Err(e) => {
+                if args.proton.is_some() || args.prefix.is_some() {
+                    return Err(CliError::Vfs(e.to_string()));
+                }
+                info!(
+                    "Proton auto-discovery did not find an active installation ({e}); falling back to native runner"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     println!("🚀 Preparing Perihelion Virtual File System sandbox:");
     println!("   Game:          {} ({})", profile.name, profile.id);
     println!("   Active Layers: {}", resolved_order.len());
     println!("   Mount Point:   {}", plan.mount_point.display());
     println!("   Mount Options: {}", mount_options);
-    println!("   Command:       {} {:?}", exec_cmd, args.args);
+
+    if let Some(ref proton) = proton_launch {
+        println!("🍷 Compatibility Layer: Proton / Wine");
+        println!("   Proton Runner:       {}", proton.runner.display());
+        println!(
+            "   Compat Data:         {}",
+            proton.compat_data_path.display()
+        );
+        println!("   Wine Prefix:         {}", proton.wine_prefix.display());
+        println!("   Target Binary:       {} {:?}", exec_cmd, args.args);
+    } else {
+        println!("🐧 Compatibility Layer: Native Linux process");
+        println!("   Target Binary:       {} {:?}", exec_cmd, args.args);
+    }
 
     if args.dry_run {
-        println!("🔎 [DRY-RUN] Verification complete. Sandboxed mount ready.");
+        println!("🔎 [DRY-RUN] Verification complete. Sandboxed mount and execution ready.");
+        if let Some(ref proton) = proton_launch {
+            println!(
+                "   [DRY-RUN] Command payload: {} run {} {:?}",
+                proton.runner.display(),
+                exec_cmd,
+                args.args
+            );
+            println!("   [DRY-RUN] Injected environment:");
+            for (k, v) in &proton.env_vars {
+                if k.starts_with("STEAM_") || k == "WINEPREFIX" || k.starts_with("Steam") {
+                    println!("             {k}={v}");
+                }
+            }
+        }
         return Ok(());
     }
 
-    let exit_code = peri_vfs::execute_in_isolated_namespace(&plan, &exec_cmd, &args.args)?;
+    let exit_code = if let Some(ref proton) = proton_launch {
+        peri_vfs::execute_proton_in_isolated_namespace(&plan, proton, &exec_cmd, &args.args)?
+    } else {
+        peri_vfs::execute_in_isolated_namespace(&plan, &exec_cmd, &args.args)?
+    };
     info!(exit_code = exit_code, "Execution finished");
 
     Ok(())

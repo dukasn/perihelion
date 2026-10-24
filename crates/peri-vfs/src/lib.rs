@@ -3,6 +3,9 @@
 //! Handles Linux mount namespaces and OverlayFS stack orchestration to deliver
 //! zero-overhead, non-destructive game sandboxing.
 
+pub mod proton;
+
+pub use proton::{ProtonLaunch, ProtonTool, SteamDiscovery};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -32,6 +35,9 @@ pub enum VfsError {
 
     #[error("Namespace configuration failure: {0}")]
     NamespaceFailed(String),
+
+    #[error("Proton / Wine resolution error: {0}")]
+    ProtonDiscoveryFailed(String),
 
     #[error("Execution failure in sandbox: {0}")]
     ExecutionFailed(String),
@@ -160,12 +166,20 @@ pub fn unmount_overlay(mount_point: &Path) -> Result<(), VfsError> {
 }
 
 /// Spawns an isolated Linux user + mount namespace and executes a target command within it.
-///
-/// Unprivileged namespaces isolate mount modifications from the host system.
 pub fn execute_in_isolated_namespace(
     plan: &VfsPlan,
     command: &str,
     args: &[String],
+) -> Result<i32, VfsError> {
+    execute_in_isolated_namespace_with_env(plan, command, args, &[])
+}
+
+/// Spawns an isolated Linux user + mount namespace with custom environment variables.
+pub fn execute_in_isolated_namespace_with_env(
+    plan: &VfsPlan,
+    command: &str,
+    args: &[String],
+    env_vars: &[(String, String)],
 ) -> Result<i32, VfsError> {
     let euid = geteuid();
     let egid = getegid();
@@ -181,13 +195,36 @@ pub fn execute_in_isolated_namespace(
     mount_overlay(plan)?;
 
     // Execute target process
-    let status = Command::new(command)
-        .args(args)
-        .current_dir(&plan.mount_point)
+    let mut cmd = Command::new(command);
+    cmd.args(args).current_dir(&plan.mount_point);
+
+    for (k, v) in env_vars {
+        cmd.env(k, v);
+    }
+
+    let status = cmd
         .status()
         .map_err(|e| VfsError::ExecutionFailed(format!("Failed to execute process: {e}")))?;
 
     Ok(status.code().unwrap_or(-1))
+}
+
+/// Executes a Windows game binary via Proton inside the sandboxed OverlayFS namespace.
+pub fn execute_proton_in_isolated_namespace(
+    plan: &VfsPlan,
+    proton: &ProtonLaunch,
+    game_executable: &str,
+    args: &[String],
+) -> Result<i32, VfsError> {
+    let mut proton_args = vec!["run".to_string(), game_executable.to_string()];
+    proton_args.extend(args.iter().cloned());
+
+    execute_in_isolated_namespace_with_env(
+        plan,
+        &proton.runner.to_string_lossy(),
+        &proton_args,
+        &proton.env_vars,
+    )
 }
 
 fn setup_id_mapping(uid: u32, gid: u32) -> Result<(), VfsError> {
