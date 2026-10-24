@@ -1,0 +1,24 @@
+[package]
+name = "peri-net"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+peri-core.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+hex.workspace = true
+tracing.workspace = true
+librqbit = { workspace = true, optional = true }
+
+[features]
+default = []
+bittorrent = ["dep:librqbit"]
+
+[dev-dependencies]
+tempfile.workspace = true
+

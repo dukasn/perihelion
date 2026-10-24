@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/peri",
+    "crates/peri-vfs",
+    "crates/peri-net",
+    "crates/peri-archive",
+    "common/peri-core",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Perihelion Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dukasn/perihelion"
+
+[workspace.dependencies]
+# Internal domain and crates
+peri-core = { path = "common/peri-core" }
+peri-vfs = { path = "crates/peri-vfs" }
+peri-net = { path = "crates/peri-net" }
+peri-archive = { path = "crates/peri-archive" }
+
+# Serialization & Manifest parsing
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+semver = { version = "1.0", features = ["serde"] }
+
+# Graph Solving
+petgraph = "0.7"
+
+# Diagnostics & Error handling
+thiserror = "2.0"
+miette = { version = "7.4", features = ["fancy"] }
+
+# CLI & Telemetry
+clap = { version = "4.5", features = ["derive", "cargo", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tokio = { version = "1.43", features = ["full"] }
+
+# System, Archive & Network adapters
+nix = { version = "0.29", features = ["mount", "sched", "user", "fs"] }
+tar = "0.4"
+zstd = { version = "0.13", features = ["zstdmt"] }
+sha2 = "0.10"
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+tempfile = "3.17"
+librqbit = { version = "9.0", default-features = false }
+
