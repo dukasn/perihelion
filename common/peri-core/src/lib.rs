@@ -8,10 +8,16 @@ pub mod error;
 pub mod graph;
 pub mod manifest;
 pub mod profile;
+pub mod vfi;
 
 pub use error::{ManifestError, ProfileError, ResolveError};
 pub use graph::{DependencyGraph, EdgeType};
 pub use manifest::{
-    Assets, LoadOrderRules, Manifest, PackageMetadata, TargetGame, MANIFEST_FILENAME,
+    Assets, LoadOrderRules, Manifest, OverrideRule, PackageMetadata, Priority, TargetGame,
+    MANIFEST_FILENAME,
 };
 pub use profile::{GameProfile, LayoutMapping};
+pub use vfi::{
+    ConflictResolutionReport, FileConflict, FileOwner, ResolutionSource, VirtualFileIndex,
+    VFI_FILENAME,
+};

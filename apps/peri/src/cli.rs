@@ -4,7 +4,7 @@ use std::path::PathBuf;
 #[derive(Debug, Parser)]
 #[command(
     name = "peri",
-    author,
+    author = "Perihelion Contributors",
     version,
     about = "Game-agnostic native Linux package manager & VFS orchestrator",
     long_about = "Perihelion is a high-performance native Linux mod manager and VFS orchestrator\n\

@@ -42,6 +42,14 @@ pub enum ResolveError {
         found: String,
         required: String,
     },
+
+    #[error("Hard conflict detected on file '{file}': mods '{mod_a}' and '{mod_b}' both have priority '{priority:?}'. Add an explicit rule to your [overrides] block.")]
+    HardConflict {
+        file: String,
+        mod_a: String,
+        mod_b: String,
+        priority: String,
+    },
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]

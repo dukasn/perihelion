@@ -6,6 +6,25 @@ use crate::error::ManifestError;
 
 pub const MANIFEST_FILENAME: &str = "peri.toml";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Priority {
+    Lowest = 1,
+    Low = 2,
+    #[default]
+    Default = 3,
+    High = 4,
+    Highest = 5,
+    Absolute = 6,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OverrideRule {
+    Priority { priority: Priority },
+    Target(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     pub package: PackageMetadata,
@@ -15,7 +34,7 @@ pub struct Manifest {
     #[serde(default)]
     pub dependencies: BTreeMap<String, String>,
     #[serde(default)]
-    pub overrides: BTreeMap<String, String>,
+    pub overrides: BTreeMap<String, OverrideRule>,
     #[serde(default)]
     pub load_order: Option<LoadOrderRules>,
 }
@@ -25,6 +44,8 @@ pub struct PackageMetadata {
     pub name: String,
     pub author: String,
     pub version: String,
+    #[serde(default)]
+    pub priority: Priority,
     #[serde(default)]
     pub description: Option<String>,
 }
@@ -150,7 +171,35 @@ sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                 .overrides
                 .get("bin/x64/plugins/cyber_engine_tweaks.asi")
                 .unwrap(),
-            "self"
+            &OverrideRule::Target("self".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_v1_2_manifest_with_priority() {
+        let sample = r#"
+[package]
+name = "Cyber Engine Tweaks"
+author = "yamashi"
+version = "1.30.0"
+priority = "high"
+
+[target]
+game_id = "cyberpunk_2077"
+
+[overrides]
+"github.com/author/conflicting-mod" = { priority = "highest" }
+"#;
+        let manifest = Manifest::from_toml_str(sample).expect("v1.2 manifest should parse");
+        assert_eq!(manifest.package.priority, Priority::High);
+        assert_eq!(
+            manifest
+                .overrides
+                .get("github.com/author/conflicting-mod")
+                .unwrap(),
+            &OverrideRule::Priority {
+                priority: Priority::Highest
+            }
         );
     }
 

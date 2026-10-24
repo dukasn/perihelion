@@ -1,4 +1,4 @@
-use petgraph::algo::{is_cyclic_directed, toposort};
+use petgraph::algo::{has_path_connecting, is_cyclic_directed, toposort};
 use petgraph::graph::{DiGraph, NodeIndex};
 use semver::{Version, VersionReq};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -15,6 +15,7 @@ pub enum EdgeType {
 #[derive(Debug, Clone)]
 pub struct DependencyGraph {
     manifests: BTreeMap<String, Manifest>,
+    extra_edges: Vec<(String, String)>,
 }
 
 impl Default for DependencyGraph {
@@ -27,6 +28,7 @@ impl DependencyGraph {
     pub fn new() -> Self {
         Self {
             manifests: BTreeMap::new(),
+            extra_edges: Vec::new(),
         }
     }
 
@@ -35,8 +37,59 @@ impl DependencyGraph {
             .insert(manifest.package.name.clone(), manifest);
     }
 
+    pub fn add_edge_by_name(&mut self, from: &str, to: &str) {
+        self.extra_edges.push((from.to_string(), to.to_string()));
+    }
+
     pub fn get_manifest(&self, name: &str) -> Option<&Manifest> {
         self.manifests.get(name)
+    }
+
+    pub fn build_petgraph(&self) -> (DiGraph<String, EdgeType>, HashMap<String, NodeIndex>) {
+        let mut graph = DiGraph::<String, EdgeType>::new();
+        let mut node_indices: HashMap<String, NodeIndex> = HashMap::new();
+
+        for name in self.manifests.keys() {
+            let idx = graph.add_node(name.clone());
+            node_indices.insert(name.clone(), idx);
+        }
+
+        // Direct edges: if B depends on A (or B loads after A), edge is A -> B
+        // (A must be loaded before B).
+        for (name, manifest) in &self.manifests {
+            let target_node = node_indices[name];
+
+            for dep_name in manifest.dependencies.keys() {
+                if let Some(&dep_node) = node_indices.get(dep_name) {
+                    graph.add_edge(dep_node, target_node, EdgeType::Requires);
+                }
+            }
+
+            if let Some(rules) = &manifest.load_order {
+                for after_name in &rules.loads_after {
+                    if let Some(&after_node) = node_indices.get(after_name) {
+                        graph.add_edge(after_node, target_node, EdgeType::LoadsAfter);
+                    }
+                }
+            }
+        }
+
+        for (from, to) in &self.extra_edges {
+            if let (Some(&from_idx), Some(&to_idx)) = (node_indices.get(from), node_indices.get(to))
+            {
+                graph.add_edge(from_idx, to_idx, EdgeType::LoadsAfter);
+            }
+        }
+
+        (graph, node_indices)
+    }
+
+    pub fn has_path(&self, from: &str, to: &str) -> bool {
+        let (graph, node_indices) = self.build_petgraph();
+        match (node_indices.get(from), node_indices.get(to)) {
+            (Some(&from_idx), Some(&to_idx)) => has_path_connecting(&graph, from_idx, to_idx, None),
+            _ => false,
+        }
     }
 
     pub fn validate_incompatibilities(&self) -> Result<(), ResolveError> {
@@ -101,33 +154,7 @@ impl DependencyGraph {
         self.validate_incompatibilities()?;
         self.validate_requirements()?;
 
-        let mut graph = DiGraph::<String, EdgeType>::new();
-        let mut node_indices: HashMap<String, NodeIndex> = HashMap::new();
-
-        for name in self.manifests.keys() {
-            let idx = graph.add_node(name.clone());
-            node_indices.insert(name.clone(), idx);
-        }
-
-        // Direct edges: if B depends on A (or B loads after A), edge is A -> B
-        // (A must be loaded before B).
-        for (name, manifest) in &self.manifests {
-            let target_node = node_indices[name];
-
-            for dep_name in manifest.dependencies.keys() {
-                if let Some(&dep_node) = node_indices.get(dep_name) {
-                    graph.add_edge(dep_node, target_node, EdgeType::Requires);
-                }
-            }
-
-            if let Some(rules) = &manifest.load_order {
-                for after_name in &rules.loads_after {
-                    if let Some(&after_node) = node_indices.get(after_name) {
-                        graph.add_edge(after_node, target_node, EdgeType::LoadsAfter);
-                    }
-                }
-            }
-        }
+        let (graph, _node_indices) = self.build_petgraph();
 
         if is_cyclic_directed(&graph) {
             let cycle_info = self.find_cycle_path(&graph);
@@ -213,6 +240,7 @@ mod tests {
                 name: name.to_string(),
                 author: "Tester".to_string(),
                 version: version.to_string(),
+                priority: Default::default(),
                 description: None,
             },
             target: TargetGame {

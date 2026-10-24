@@ -1,10 +1,10 @@
 # Project Perihelion: Architecture & Design Document
 
-**Status:** v1.0 Draft  
-**Target Platform:** Linux (Native)  
-**Tech Stack:** Rust, Tokio, OverlayFS, BitTorrent (`librqbit`), Zstandard, `petgraph`  
+**Status:** v1.2 Draft
 
----
+**Target Platform:** Linux (Native)
+
+**Tech Stack:** Rust, Tokio, OverlayFS, BitTorrent (`librqbit`), Zstandard, `petgraph`
 
 ## 1. Executive Summary
 
@@ -13,6 +13,7 @@
 By leveraging native Linux features (OverlayFS, Mount Namespaces), decentralized distribution (BitTorrent, generic HTTP), and standardized compression, Perihelion provides a deeply sandboxed and scriptable CLI (`peri`) for managing massive modlists across *N* supported games.
 
 ### 1.1 Core Goals
+
 * **Game-Agnostic Engine:** The core engine knows nothing about specific games. Game support is driven by declarative VFS layout profiles.
 * **Zero-Overhead Sandboxing:** Use kernel-level OverlayFS to construct target game directories without modifying base game files.
 * **The `.peca` Standard:** Establish the Perihelion Compressed Archive (`.peca`)—a blazing-fast `.tar.zst` format with embedded metadata—as the universal distribution standard.
@@ -20,6 +21,7 @@ By leveraging native Linux features (OverlayFS, Mount Namespaces), decentralized
 * **Decentralized Distribution:** Shift hosting burdens away from centralized APIs using P2P (BitTorrent) with WebSeed fallbacks.
 
 ### 1.2 Non-Goals (For v1)
+
 * A Graphical User Interface (GUI). Focus is strictly on the `peri` CLI MVP.
 * Native Windows support (relies on Linux-specific namespaces/OverlayFS).
 
@@ -48,14 +50,14 @@ perihelion/
 ### 2.1 The Domain (`common/peri-core`)
 **Rules:** Pure functional logic. No I/O, no async runtimes, no side effects.
 * **Responsibilities:**
-    * Parsing `peri.toml` manifests into strictly typed `serde` structs.
-    * Solving Directed Acyclic Graphs (DAGs) for load orders and dependencies using `petgraph`.
-    * Mapping generalized mod files to specific game layouts.
+  * Parsing `peri.toml` manifests into strictly typed `serde` structs.
+  * Solving Directed Acyclic Graphs (DAGs) for load orders and dependencies using `petgraph`.
+  * Mapping generalized mod files to specific game layouts.
 
 ### 2.2 The Adapters (`crates/peri-*`)
-**Rules:** Depend only on `common/peri-core`. 
+**Rules:** Depend only on `common/peri-core`.
 * **`peri-vfs`:** Handles system calls to spawn isolated mount namespaces and mount OverlayFS stacks.
-* **`peri-net`:** Handles fetch operations.
+* **`peri-net`:** Handles fetch operations via P2P or direct HTTP.
 * **`peri-archive`:** Handles the fast extraction and creation of `.peca` files.
 
 ### 2.3 The Runtimes (`apps/*`)
@@ -86,6 +88,7 @@ The manifest is game-agnostic, defining both the target environment and the dist
 name = "Cyber Engine Tweaks"
 author = "yamashi"
 version = "1.30.0"
+priority = "high" # Suggests a conflict resolution weight
 
 [target]
 # Defines which game profile the VFS should use to mount this mod
@@ -104,8 +107,8 @@ sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 "github.com/author/some-framework" = ">=2.0"
 
 [overrides]
-# Explicit file conflict resolution
-"bin/x64/plugins/cyber_engine_tweaks.asi" = "self"
+# Local workspace overrides to enforce DAG edges
+"github.com/author/conflicting-mod" = { priority = "highest" }
 ```
 
 ---
@@ -115,26 +118,44 @@ sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 Load orders and dependencies are mathematically proven using `petgraph` inside `peri-core`.
 
 1. **Cycle Detection:** Before mounting, the engine runs `is_cyclic_directed()`. If mod authors create a circular dependency (A requires B requires A), `peri` halts execution and pinpoints the loop.
-2. **Topological Sorting:** If acyclic, `toposort()` resolves all `Requires`, `LoadsAfter`, and `IncompatibleWith` rules into a flat, deterministic array. This array dictates the exact sequence of OverlayFS layers.
+2. **Topological Sorting:** If acyclic, `toposort()` resolves all `Requires` and `LoadsAfter` rules into a flat, deterministic array. This array dictates the exact sequence of OverlayFS layers.
 
 ---
 
-## 6. CLI Interface (`peri` v1 MVP)
+## 6. Conflict Resolution & The Virtual File Index (VFI)
+
+Perihelion resolves file conflicts dynamically using a DAG and a 3-tier Waterfall logic, ensuring deterministic OverlayFS layers without bogging the user down in micromanagement.
+
+### 6.1 The Priority Enum
+Mods are assigned a named priority level: `lowest`, `low`, `default` (implicit), `high`, `highest`, or `absolute`. The `absolute` priority is strictly reserved for the end-user's local workspace configuration.
+
+### 6.2 The Virtual File Index (VFI)
+When `.peca` files are extracted to the cache, a lightweight JSON/binary index of all file paths is generated. During `peri check` or `peri run`, `peri-core` cross-references these indexes in memory to detect conflicts (e.g., Mod A and Mod B both edit `textures/iron_sword.dds`).
+
+### 6.3 The Resolution Waterfall
+When the VFI detects a file conflict, the DAG resolves it in this strict order:
+1. **Explicit Edge:** If an explicit `loads_after` or `requires` rule exists between the mods (defined in `peri.toml`), the dependent mod wins.
+2. **Priority Weight:** If no explicit edge exists, the mod with the higher named priority wins. `peri-core` automatically generates a topological edge placing the higher-priority mod on a higher OverlayFS layer.
+3. **Hard Conflict:** If both mods have the *same* priority and no explicit edge, `peri-core` treats it as a non-deterministic state. The CLI halts and throws a diagnostic error requiring the user to add an explicit rule to their `[overrides]` block.
+
+---
+
+## 7. CLI Interface (`peri` v1 MVP)
 
 Built with declarative `clap`.
 
-| Command | Action |
-| :--- | :--- |
-| `peri init <game_id>` | Initializes a Perihelion workspace mapped to a specific game profile. |
-| `peri get <uri>` | Fetches a mod/modpack, parses its manifest, and adds it to the VFS cache. |
-| `peri sync` | Downloads, unpacks, and validates the entire dependency tree. |
-| `peri package` | Compiles a local mod directory into a validated `.peca` archive. |
-| `peri check` | Runs global dependency DAG checks and validates file integrity. |
-| `peri run` | Spawns the namespace, constructs the VFS layer, and executes the game. |
+| Command | Action | 
+| :--- | :--- | 
+| `peri init <game_id>` | Initializes a Perihelion workspace mapped to a specific game profile. | 
+| `peri get <uri>` | Fetches a mod/modpack, parses its manifest, and adds it to the VFS cache. | 
+| `peri sync` | Downloads, unpacks, and validates the entire dependency tree. | 
+| `peri package` | Compiles a local mod directory into a validated `.peca` archive. | 
+| `peri check` | Runs global dependency DAG checks and validates the Virtual File Index (VFI). | 
+| `peri run` | Spawns the namespace, constructs the VFS layer, and executes the game. | 
 
 ---
 
-## 7. Observability & Issue Handling
+## 8. Observability & Issue Handling
 
 * **Domain Errors (`thiserror`):** Strict, programmatic error enums defined in `peri-core` (e.g., `ResolveError::CyclicDependencyDetected`).
 * **User Diagnostics (`miette`):** Used at the CLI boundary to translate domain errors into actionable, compiler-style terminal outputs (highlighting specific lines in the `peri.toml`).
@@ -142,7 +163,7 @@ Built with declarative `clap`.
 
 ---
 
-## 8. Future Milestones (v2 and beyond)
+## 9. Future Milestones (v2 and beyond)
 
 * **`helion` GUI:** An `egui`-based native application that provides a TUI-inspired, data-dense interface utilizing the same `peri-core` domain.
 * **Perihelion Daemon (`perid`):** A background service enabling users to continuously seed cached mods to the P2P network.

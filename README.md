@@ -53,3 +53,4 @@ cargo build --release -p peri
 | `peri package` | Compiles a local mod directory into a validated `.peca` archive |
 | `peri check` | Runs global dependency DAG checks and validates file integrity |
 | `peri run` | Spawns the namespace, constructs the VFS layer, and executes the game |
+

@@ -73,6 +73,26 @@ pub fn read_manifest_from_peca(peca_path: &Path) -> Result<Manifest, ArchiveErro
     Err(ArchiveError::MissingManifest)
 }
 
+/// Lists all file paths contained in a `.peca` archive (excluding root peri.toml).
+pub fn list_peca_files(peca_path: &Path) -> Result<Vec<String>, ArchiveError> {
+    let file = File::open(peca_path)?;
+    let decoder =
+        zstd::stream::Decoder::new(file).map_err(|e| ArchiveError::Compression(e.to_string()))?;
+    let mut archive = tar::Archive::new(decoder);
+    let mut paths = Vec::new();
+
+    for entry_result in archive.entries()? {
+        let entry = entry_result?;
+        let path = entry.path()?.into_owned();
+        let path_str = path.to_string_lossy().to_string();
+        if path_str != MANIFEST_FILENAME && !entry.header().entry_type().is_dir() {
+            paths.push(path_str);
+        }
+    }
+
+    Ok(paths)
+}
+
 /// Creates a `.peca` archive from a directory.
 ///
 /// Enforces that `source_dir` contains a valid `peri.toml` at its root.

@@ -1,8 +1,8 @@
 # Perihelion Toolchain Configuration via mise
 [tools]
 rust = "stable"
+sccache = "latest"
 lefthook = "latest"
-cargo-nextest = "latest"
 
 [env]
 RUST_BACKTRACE = "1"

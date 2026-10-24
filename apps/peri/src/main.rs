@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -11,9 +12,12 @@ mod error;
 
 use cli::{CheckArgs, Cli, Commands, GetArgs, InitArgs, PackageArgs, RunArgs, SyncArgs};
 use error::CliError;
-use peri_archive::{compute_file_sha256, create_peca, extract_peca, read_manifest_from_peca};
+use peri_archive::{
+    compute_file_sha256, create_peca, extract_peca, list_peca_files, read_manifest_from_peca,
+};
 use peri_core::{
-    DependencyGraph, GameProfile, Manifest, PackageMetadata, TargetGame, MANIFEST_FILENAME,
+    DependencyGraph, GameProfile, Manifest, OverrideRule, PackageMetadata, ResolutionSource,
+    TargetGame, VirtualFileIndex, MANIFEST_FILENAME,
 };
 use peri_vfs::VfsPlan;
 
@@ -76,6 +80,7 @@ async fn handle_init(args: InitArgs) -> Result<(), CliError> {
                 name,
                 author: std::env::var("USER").unwrap_or_else(|_| "author".to_string()),
                 version: "0.1.0".to_string(),
+                priority: Default::default(),
                 description: Some(format!("Perihelion mod configuration for {}", args.game_id)),
             },
             target: TargetGame {
@@ -223,7 +228,25 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
 
     fs::create_dir_all(&extracted_dir).map_err(|e| CliError::Workspace(e.to_string()))?;
 
+    let root_manifest_path = workspace.join(MANIFEST_FILENAME);
+    let mut overrides: HashMap<String, OverrideRule> = HashMap::new();
+    let mut game_profile = GameProfile::generic("generic");
+
+    if root_manifest_path.exists() {
+        if let Ok(content) = fs::read_to_string(&root_manifest_path) {
+            if let Ok(root_manifest) = Manifest::from_toml_str(&content) {
+                overrides = root_manifest.overrides.into_iter().collect();
+                game_profile = if root_manifest.target.game_id == "cyberpunk_2077" {
+                    GameProfile::cyberpunk_2077()
+                } else {
+                    GameProfile::generic(&root_manifest.target.game_id)
+                };
+            }
+        }
+    }
+
     let mut graph = DependencyGraph::new();
+    let mut vfi = VirtualFileIndex::new();
     let mut peca_files: Vec<(Manifest, PathBuf)> = Vec::new();
 
     for entry in fs::read_dir(&cache_dir).map_err(|e| CliError::Workspace(e.to_string()))? {
@@ -231,10 +254,22 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
         let path = entry.path();
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("peca") {
             let manifest = read_manifest_from_peca(&path)?;
+            let files = list_peca_files(&path)?;
+            for file in files {
+                let mapped = game_profile.map_path(Path::new(&file));
+                vfi.add_entry(
+                    mapped.to_string_lossy(),
+                    &manifest.package.name,
+                    manifest.package.priority,
+                );
+            }
             graph.add_manifest(manifest.clone());
             peca_files.push((manifest, path));
         }
     }
+
+    // Apply the 3-Tier Resolution Waterfall
+    let _reports = vfi.resolve_conflicts_waterfall(&mut graph, &overrides)?;
 
     // Validate DAG and resolve order
     let resolved_order = graph.resolve_load_order()?;
@@ -271,7 +306,25 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
         return Ok(());
     }
 
+    let root_manifest_path = workspace.join(MANIFEST_FILENAME);
+    let mut overrides: HashMap<String, OverrideRule> = HashMap::new();
+    let mut game_profile = GameProfile::generic("generic");
+
+    if root_manifest_path.exists() {
+        if let Ok(content) = fs::read_to_string(&root_manifest_path) {
+            if let Ok(root_manifest) = Manifest::from_toml_str(&content) {
+                overrides = root_manifest.overrides.into_iter().collect();
+                game_profile = if root_manifest.target.game_id == "cyberpunk_2077" {
+                    GameProfile::cyberpunk_2077()
+                } else {
+                    GameProfile::generic(&root_manifest.target.game_id)
+                };
+            }
+        }
+    }
+
     let mut graph = DependencyGraph::new();
+    let mut vfi = VirtualFileIndex::new();
     let mut count = 0;
 
     for entry in fs::read_dir(&cache_dir).map_err(|e| CliError::Workspace(e.to_string()))? {
@@ -279,17 +332,53 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
         let path = entry.path();
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("peca") {
             let manifest = read_manifest_from_peca(&path)?;
+            let files = list_peca_files(&path)?;
+            for file in files {
+                let mapped = game_profile.map_path(Path::new(&file));
+                vfi.add_entry(
+                    mapped.to_string_lossy(),
+                    &manifest.package.name,
+                    manifest.package.priority,
+                );
+            }
             graph.add_manifest(manifest);
             count += 1;
         }
     }
 
     println!(
-        "🔍 Validating dependency DAG for {} installed packages...",
+        "🔍 Validating dependency DAG and Virtual File Index (VFI) for {} packages...",
         count
     );
-    let order = graph.resolve_load_order()?;
 
+    // Apply the 3-Tier Resolution Waterfall
+    let reports = vfi.resolve_conflicts_waterfall(&mut graph, &overrides)?;
+    if !reports.is_empty() {
+        println!(
+            "⚡ Detected and resolved {} file conflict(s) via 3-Tier Waterfall:",
+            reports.len()
+        );
+        for report in &reports {
+            match &report.source {
+                ResolutionSource::ExplicitEdge { winner } => {
+                    println!(
+                        "   • [Tier 1: Explicit Edge] '{}' resolved -> '{}' wins",
+                        report.file_path, winner
+                    );
+                }
+                ResolutionSource::PriorityWeight { winner, priority } => {
+                    println!(
+                        "   • [Tier 2: Priority {:?}] '{}' resolved -> '{}' wins",
+                        priority, report.file_path, winner
+                    );
+                }
+            }
+        }
+    } else {
+        println!("✨ Virtual File Index check clean: no file conflicts detected.");
+    }
+
+    let order = graph.resolve_load_order()?;
     println!("✅ DAG check passed successfully. No cycles detected!");
     println!("📋 Calculated Deterministic Load Order (OverlayFS stack):");
     for (idx, mod_name) in order.iter().enumerate() {
@@ -324,6 +413,8 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
     let cache_dir = workspace.join(CACHE_MODS_DIR);
     let extracted_dir = workspace.join(EXTRACTED_DIR);
     let mut graph = DependencyGraph::new();
+    let mut vfi = VirtualFileIndex::new();
+    let overrides: HashMap<String, OverrideRule> = manifest.overrides.clone().into_iter().collect();
 
     if cache_dir.exists() {
         for entry in fs::read_dir(&cache_dir).map_err(|e| CliError::Workspace(e.to_string()))? {
@@ -331,11 +422,21 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("peca") {
                 let m = read_manifest_from_peca(&path)?;
+                let files = list_peca_files(&path)?;
+                for file in files {
+                    let mapped = profile.map_path(Path::new(&file));
+                    vfi.add_entry(
+                        mapped.to_string_lossy(),
+                        &m.package.name,
+                        m.package.priority,
+                    );
+                }
                 graph.add_manifest(m);
             }
         }
     }
 
+    let _reports = vfi.resolve_conflicts_waterfall(&mut graph, &overrides)?;
     let resolved_order = graph.resolve_load_order()?;
     let layers: Vec<PathBuf> = resolved_order
         .iter()
