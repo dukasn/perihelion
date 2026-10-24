@@ -19,3 +19,11 @@
 *~
 .DS_Store
 
+# AI Agent Memory & Scratchpads (untracked)
+.ai/
+AGENTS.md
+CLAUDE.md
+.cursorrules
+.cursor/
+
+
