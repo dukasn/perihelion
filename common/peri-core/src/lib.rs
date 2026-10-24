@@ -18,6 +18,6 @@ pub use manifest::{
 };
 pub use profile::{GameProfile, LayoutMapping};
 pub use vfi::{
-    ConflictResolutionReport, FileConflict, FileOwner, ResolutionSource, VirtualFileIndex,
-    VFI_FILENAME,
+    ConflictResolutionReport, FileConflict, FileOwner, PackageFileIndex, ResolutionSource,
+    VirtualFileIndex, VFI_FILENAME,
 };

@@ -13,19 +13,22 @@ mod error;
 use cli::{CheckArgs, Cli, Commands, GetArgs, InitArgs, PackageArgs, RunArgs, SyncArgs};
 use error::CliError;
 use peri_archive::{
-    compute_file_sha256, create_peca, extract_peca, list_peca_files, read_manifest_from_peca,
+    compute_file_sha256, create_peca, extract_peca, generate_package_file_index,
+    load_package_vfi_cache, read_manifest_from_peca, save_package_vfi_cache,
 };
 use peri_core::{
-    DependencyGraph, GameProfile, Manifest, OverrideRule, PackageMetadata, ResolutionSource,
-    TargetGame, VirtualFileIndex, MANIFEST_FILENAME,
+    DependencyGraph, GameProfile, Manifest, OverrideRule, PackageFileIndex, PackageMetadata,
+    ResolutionSource, TargetGame, VirtualFileIndex, MANIFEST_FILENAME,
 };
 use peri_vfs::VfsPlan;
 
 const CACHE_MODS_DIR: &str = ".perihelion/cache/mods";
+const VFI_CACHE_DIR: &str = ".perihelion/cache/vfi";
 const EXTRACTED_DIR: &str = ".perihelion/extracted";
 const UPPER_DIR: &str = ".perihelion/upper";
 const WORK_DIR: &str = ".perihelion/work";
 const MOUNT_DIR: &str = ".perihelion/mnt";
+const PROFILES_DIR: &str = ".perihelion/profiles";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -55,6 +58,62 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_game_profile(workspace: &Path, game_id: &str) -> GameProfile {
+    let mut custom_profiles = Vec::new();
+
+    // 1. Check workspace profiles: .perihelion/profiles/*.toml
+    let ws_profiles = workspace.join(PROFILES_DIR);
+    if ws_profiles.exists() {
+        if let Ok(entries) = fs::read_dir(ws_profiles) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                    if let Ok(content) = fs::read_to_string(path) {
+                        if let Ok(profile) = GameProfile::from_toml_str(&content) {
+                            custom_profiles.push(profile);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Check user config directory: ~/.config/perihelion/profiles/*.toml
+    if let Ok(home) = std::env::var("HOME") {
+        let user_profiles = PathBuf::from(home).join(".config/perihelion/profiles");
+        if user_profiles.exists() {
+            if let Ok(entries) = fs::read_dir(user_profiles) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                        if let Ok(content) = fs::read_to_string(path) {
+                            if let Ok(profile) = GameProfile::from_toml_str(&content) {
+                                custom_profiles.push(profile);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    GameProfile::resolve(game_id, &custom_profiles)
+}
+
+fn load_or_cache_vfi(
+    vfi_cache_dir: &Path,
+    peca_path: &Path,
+    manifest: &Manifest,
+) -> Result<PackageFileIndex, CliError> {
+    if let Ok(Some(cached)) = load_package_vfi_cache(vfi_cache_dir, &manifest.package.name) {
+        return Ok(cached);
+    }
+
+    let index = generate_package_file_index(peca_path)?;
+    let _ = save_package_vfi_cache(vfi_cache_dir, &index);
+    Ok(index)
 }
 
 async fn handle_init(args: InitArgs) -> Result<(), CliError> {
@@ -98,8 +157,12 @@ async fn handle_init(args: InitArgs) -> Result<(), CliError> {
         info!(path = %manifest_path.display(), "Created peri.toml manifest");
     }
 
-    // Create .perihelion cache and runtime state directories
+    // Create .perihelion cache, profile, and runtime state directories
     fs::create_dir_all(workspace_path.join(CACHE_MODS_DIR))
+        .map_err(|e| CliError::Workspace(e.to_string()))?;
+    fs::create_dir_all(workspace_path.join(VFI_CACHE_DIR))
+        .map_err(|e| CliError::Workspace(e.to_string()))?;
+    fs::create_dir_all(workspace_path.join(PROFILES_DIR))
         .map_err(|e| CliError::Workspace(e.to_string()))?;
     fs::create_dir_all(workspace_path.join(EXTRACTED_DIR))
         .map_err(|e| CliError::Workspace(e.to_string()))?;
@@ -110,14 +173,19 @@ async fn handle_init(args: InitArgs) -> Result<(), CliError> {
     fs::create_dir_all(workspace_path.join(MOUNT_DIR))
         .map_err(|e| CliError::Workspace(e.to_string()))?;
 
+    let profile = resolve_game_profile(&workspace_path, &args.game_id);
     println!(
-        "✨ Initialized Perihelion workspace for game '{}' at {}",
-        args.game_id,
+        "✨ Initialized Perihelion workspace for '{}' ({}) at {}",
+        profile.name,
+        profile.id,
         workspace_path
             .canonicalize()
             .unwrap_or(workspace_path)
             .display()
     );
+    if let Some(app_id) = profile.steam_app_id {
+        println!("   Steam App ID: {}", app_id);
+    }
 
     Ok(())
 }
@@ -204,10 +272,14 @@ async fn handle_get(args: GetArgs) -> Result<(), CliError> {
     }
 
     let manifest = read_manifest_from_peca(&dest_file)?;
+    let vfi_cache_dir = Path::new(VFI_CACHE_DIR);
+    let index = load_or_cache_vfi(vfi_cache_dir, &dest_file, &manifest)?;
+
     println!(
-        "📥 Successfully cached mod '{}' v{} -> {}",
+        "📥 Successfully cached mod '{}' v{} ({} files indexed) -> {}",
         manifest.package.name,
         manifest.package.version,
+        index.files.len(),
         dest_file.display()
     );
 
@@ -236,11 +308,7 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
         if let Ok(content) = fs::read_to_string(&root_manifest_path) {
             if let Ok(root_manifest) = Manifest::from_toml_str(&content) {
                 overrides = root_manifest.overrides.into_iter().collect();
-                game_profile = if root_manifest.target.game_id == "cyberpunk_2077" {
-                    GameProfile::cyberpunk_2077()
-                } else {
-                    GameProfile::generic(&root_manifest.target.game_id)
-                };
+                game_profile = resolve_game_profile(&workspace, &root_manifest.target.game_id);
             }
         }
     }
@@ -248,21 +316,20 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
     let mut graph = DependencyGraph::new();
     let mut vfi = VirtualFileIndex::new();
     let mut peca_files: Vec<(Manifest, PathBuf)> = Vec::new();
+    let vfi_cache_dir = workspace.join(VFI_CACHE_DIR);
 
     for entry in fs::read_dir(&cache_dir).map_err(|e| CliError::Workspace(e.to_string()))? {
         let entry = entry.map_err(|e| CliError::Workspace(e.to_string()))?;
         let path = entry.path();
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("peca") {
             let manifest = read_manifest_from_peca(&path)?;
-            let files = list_peca_files(&path)?;
-            for file in files {
-                let mapped = game_profile.map_path(Path::new(&file));
-                vfi.add_entry(
-                    mapped.to_string_lossy(),
-                    &manifest.package.name,
-                    manifest.package.priority,
-                );
-            }
+            let index = load_or_cache_vfi(&vfi_cache_dir, &path, &manifest)?;
+            vfi.add_package_index(&index, |p| {
+                game_profile
+                    .map_path(Path::new(p))
+                    .to_string_lossy()
+                    .into_owned()
+            });
             graph.add_manifest(manifest.clone());
             peca_files.push((manifest, path));
         }
@@ -314,11 +381,7 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
         if let Ok(content) = fs::read_to_string(&root_manifest_path) {
             if let Ok(root_manifest) = Manifest::from_toml_str(&content) {
                 overrides = root_manifest.overrides.into_iter().collect();
-                game_profile = if root_manifest.target.game_id == "cyberpunk_2077" {
-                    GameProfile::cyberpunk_2077()
-                } else {
-                    GameProfile::generic(&root_manifest.target.game_id)
-                };
+                game_profile = resolve_game_profile(&workspace, &root_manifest.target.game_id);
             }
         }
     }
@@ -326,21 +389,20 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
     let mut graph = DependencyGraph::new();
     let mut vfi = VirtualFileIndex::new();
     let mut count = 0;
+    let vfi_cache_dir = workspace.join(VFI_CACHE_DIR);
 
     for entry in fs::read_dir(&cache_dir).map_err(|e| CliError::Workspace(e.to_string()))? {
         let entry = entry.map_err(|e| CliError::Workspace(e.to_string()))?;
         let path = entry.path();
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("peca") {
             let manifest = read_manifest_from_peca(&path)?;
-            let files = list_peca_files(&path)?;
-            for file in files {
-                let mapped = game_profile.map_path(Path::new(&file));
-                vfi.add_entry(
-                    mapped.to_string_lossy(),
-                    &manifest.package.name,
-                    manifest.package.priority,
-                );
-            }
+            let index = load_or_cache_vfi(&vfi_cache_dir, &path, &manifest)?;
+            vfi.add_package_index(&index, |p| {
+                game_profile
+                    .map_path(Path::new(p))
+                    .to_string_lossy()
+                    .into_owned()
+            });
             graph.add_manifest(manifest);
             count += 1;
         }
@@ -404,13 +466,10 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
         fs::read_to_string(&root_manifest_path).map_err(|e| CliError::Workspace(e.to_string()))?;
     let manifest = Manifest::from_toml_str(&manifest_content)?;
 
-    let profile = if manifest.target.game_id == "cyberpunk_2077" {
-        GameProfile::cyberpunk_2077()
-    } else {
-        GameProfile::generic(&manifest.target.game_id)
-    };
+    let profile = resolve_game_profile(&workspace, &manifest.target.game_id);
 
     let cache_dir = workspace.join(CACHE_MODS_DIR);
+    let vfi_cache_dir = workspace.join(VFI_CACHE_DIR);
     let extracted_dir = workspace.join(EXTRACTED_DIR);
     let mut graph = DependencyGraph::new();
     let mut vfi = VirtualFileIndex::new();
@@ -422,15 +481,13 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("peca") {
                 let m = read_manifest_from_peca(&path)?;
-                let files = list_peca_files(&path)?;
-                for file in files {
-                    let mapped = profile.map_path(Path::new(&file));
-                    vfi.add_entry(
-                        mapped.to_string_lossy(),
-                        &m.package.name,
-                        m.package.priority,
-                    );
-                }
+                let index = load_or_cache_vfi(&vfi_cache_dir, &path, &m)?;
+                vfi.add_package_index(&index, |p| {
+                    profile
+                        .map_path(Path::new(p))
+                        .to_string_lossy()
+                        .into_owned()
+                });
                 graph.add_manifest(m);
             }
         }

@@ -5,9 +5,9 @@
 
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use peri_core::{Manifest, MANIFEST_FILENAME};
+use peri_core::{Manifest, PackageFileIndex, MANIFEST_FILENAME};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -15,6 +15,9 @@ use thiserror::Error;
 pub enum ArchiveError {
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
+
+    #[error("JSON serialization error: {0}")]
+    Json(#[from] serde_json::Error),
 
     #[error("Manifest error: {0}")]
     Manifest(#[from] peri_core::ManifestError),
@@ -91,6 +94,46 @@ pub fn list_peca_files(peca_path: &Path) -> Result<Vec<String>, ArchiveError> {
     }
 
     Ok(paths)
+}
+
+/// Inspects a `.peca` archive and builds its `PackageFileIndex` in memory.
+pub fn generate_package_file_index(peca_path: &Path) -> Result<PackageFileIndex, ArchiveError> {
+    let manifest = read_manifest_from_peca(peca_path)?;
+    let files = list_peca_files(peca_path)?;
+    Ok(PackageFileIndex::new(
+        manifest.package.name,
+        manifest.package.version,
+        manifest.package.priority,
+        files,
+    ))
+}
+
+/// Saves a `PackageFileIndex` to the designated VFI cache directory (e.g. `.perihelion/cache/vfi/<package_name>.vfi.json`).
+pub fn save_package_vfi_cache(
+    vfi_cache_dir: &Path,
+    index: &PackageFileIndex,
+) -> Result<PathBuf, ArchiveError> {
+    fs::create_dir_all(vfi_cache_dir)?;
+    let sanitized_name = index.package_name.replace(['/', '\\', ' '], "_");
+    let cache_file = vfi_cache_dir.join(format!("{sanitized_name}.vfi.json"));
+    let json = index.to_json()?;
+    fs::write(&cache_file, json)?;
+    Ok(cache_file)
+}
+
+/// Loads a cached `PackageFileIndex` if present on disk.
+pub fn load_package_vfi_cache(
+    vfi_cache_dir: &Path,
+    package_name: &str,
+) -> Result<Option<PackageFileIndex>, ArchiveError> {
+    let sanitized_name = package_name.replace(['/', '\\', ' '], "_");
+    let cache_file = vfi_cache_dir.join(format!("{sanitized_name}.vfi.json"));
+    if !cache_file.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(cache_file)?;
+    let index = PackageFileIndex::from_json(&content)?;
+    Ok(Some(index))
 }
 
 /// Creates a `.peca` archive from a directory.
@@ -212,5 +255,48 @@ game_id = "test_game"
             ArchiveError::MissingManifest => (),
             _ => panic!("Expected MissingManifest error, got {err:?}"),
         }
+    }
+
+    #[test]
+    fn test_vfi_cache_generation_and_loading() {
+        let src_dir = tempdir().unwrap();
+        let out_dir = tempdir().unwrap();
+        let vfi_cache_dir = tempdir().unwrap();
+
+        let manifest_content = r#"
+[package]
+name = "Combat Overhaul"
+author = "Modder"
+version = "2.1.0"
+priority = "high"
+
+[target]
+game_id = "skyrim"
+"#;
+        fs::write(src_dir.path().join(MANIFEST_FILENAME), manifest_content).unwrap();
+        fs::create_dir_all(src_dir.path().join("scripts")).unwrap();
+        fs::write(src_dir.path().join("scripts/combat.pex"), "binary").unwrap();
+        fs::write(src_dir.path().join("CombatOverhaul.esp"), "esp").unwrap();
+
+        let peca_file = out_dir.path().join("combat.peca");
+        create_peca(src_dir.path(), &peca_file, 3).unwrap();
+
+        // 1. Generate package index
+        let index =
+            generate_package_file_index(&peca_file).expect("Index generation should succeed");
+        assert_eq!(index.package_name, "Combat Overhaul");
+        assert_eq!(index.files.len(), 2);
+        assert!(index.files.iter().any(|f| f.ends_with("combat.pex")));
+
+        // 2. Save cache
+        let cache_file = save_package_vfi_cache(vfi_cache_dir.path(), &index)
+            .expect("Save cache should succeed");
+        assert!(cache_file.exists());
+
+        // 3. Load cache
+        let loaded = load_package_vfi_cache(vfi_cache_dir.path(), "Combat Overhaul")
+            .expect("Load cache should succeed")
+            .expect("Cache file should exist");
+        assert_eq!(loaded, index);
     }
 }

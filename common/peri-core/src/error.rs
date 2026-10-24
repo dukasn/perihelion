@@ -57,6 +57,9 @@ pub enum ProfileError {
     #[error("Unknown game profile ID: '{0}'")]
     UnknownGameProfile(String),
 
+    #[error("Failed to parse game profile TOML: {0}")]
+    ParseError(String),
+
     #[error("Invalid profile configuration: {0}")]
     InvalidProfile(String),
 }

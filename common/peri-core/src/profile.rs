@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use crate::error::ProfileError;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutMapping {
     pub from_prefix: String,
@@ -12,6 +14,8 @@ pub struct GameProfile {
     pub id: String,
     pub name: String,
     #[serde(default)]
+    pub steam_app_id: Option<u64>,
+    #[serde(default)]
     pub default_executable: Option<String>,
     #[serde(default)]
     pub mappings: Vec<LayoutMapping>,
@@ -22,15 +26,25 @@ impl GameProfile {
         Self {
             id: id.into(),
             name: name.into(),
+            steam_app_id: None,
             default_executable: None,
             mappings: Vec::new(),
         }
+    }
+
+    pub fn from_toml_str(input: &str) -> Result<Self, ProfileError> {
+        toml::from_str(input).map_err(|e| ProfileError::ParseError(e.to_string()))
+    }
+
+    pub fn to_toml_str(&self) -> Result<String, ProfileError> {
+        toml::to_string_pretty(self).map_err(|e| ProfileError::ParseError(e.to_string()))
     }
 
     pub fn cyberpunk_2077() -> Self {
         Self {
             id: "cyberpunk_2077".to_string(),
             name: "Cyberpunk 2077".to_string(),
+            steam_app_id: Some(1091500),
             default_executable: Some("bin/x64/Cyberpunk2077.exe".to_string()),
             mappings: vec![
                 LayoutMapping {
@@ -53,13 +67,80 @@ impl GameProfile {
         }
     }
 
+    pub fn skyrim_se() -> Self {
+        Self {
+            id: "skyrim_se".to_string(),
+            name: "The Elder Scrolls V: Skyrim Special Edition".to_string(),
+            steam_app_id: Some(489830),
+            default_executable: Some("SkyrimSE.exe".to_string()),
+            mappings: vec![
+                LayoutMapping {
+                    from_prefix: "Data".to_string(),
+                    to_prefix: "Data".to_string(),
+                },
+                LayoutMapping {
+                    from_prefix: "data".to_string(),
+                    to_prefix: "Data".to_string(),
+                },
+                LayoutMapping {
+                    from_prefix: "SKSE".to_string(),
+                    to_prefix: "Data/SKSE".to_string(),
+                },
+                LayoutMapping {
+                    from_prefix: "skse".to_string(),
+                    to_prefix: "Data/SKSE".to_string(),
+                },
+            ],
+        }
+    }
+
+    pub fn starfield() -> Self {
+        Self {
+            id: "starfield".to_string(),
+            name: "Starfield".to_string(),
+            steam_app_id: Some(1716740),
+            default_executable: Some("Starfield.exe".to_string()),
+            mappings: vec![
+                LayoutMapping {
+                    from_prefix: "Data".to_string(),
+                    to_prefix: "Data".to_string(),
+                },
+                LayoutMapping {
+                    from_prefix: "data".to_string(),
+                    to_prefix: "Data".to_string(),
+                },
+            ],
+        }
+    }
+
     pub fn generic(id: &str) -> Self {
         Self {
             id: id.to_string(),
             name: id.to_string(),
+            steam_app_id: None,
             default_executable: None,
             mappings: Vec::new(),
         }
+    }
+
+    pub fn builtin_profiles() -> Vec<Self> {
+        vec![Self::cyberpunk_2077(), Self::skyrim_se(), Self::starfield()]
+    }
+
+    pub fn resolve(id: &str, custom_profiles: &[Self]) -> Self {
+        for profile in custom_profiles {
+            if profile.id.eq_ignore_ascii_case(id) {
+                return profile.clone();
+            }
+        }
+
+        for builtin in Self::builtin_profiles() {
+            if builtin.id.eq_ignore_ascii_case(id) {
+                return builtin;
+            }
+        }
+
+        Self::generic(id)
     }
 
     pub fn map_path(&self, relative_path: &Path) -> PathBuf {
@@ -88,9 +169,46 @@ mod tests {
     }
 
     #[test]
-    fn test_default_passthrough() {
-        let profile = GameProfile::generic("custom");
-        let path = Path::new("some/file.txt");
-        assert_eq!(profile.map_path(path), PathBuf::from("some/file.txt"));
+    fn test_skyrim_se_mapping() {
+        let profile = GameProfile::skyrim_se();
+        let mod_path = Path::new("SKSE/Plugins/engine_fixes.dll");
+        let mapped = profile.map_path(mod_path);
+        assert_eq!(mapped, PathBuf::from("Data/SKSE/Plugins/engine_fixes.dll"));
+    }
+
+    #[test]
+    fn test_profile_toml_serde() {
+        let sample = r#"
+id = "fallout4"
+name = "Fallout 4"
+steam_app_id = 377160
+default_executable = "Fallout4.exe"
+
+[[mappings]]
+from_prefix = "Data"
+to_prefix = "Data"
+"#;
+        let profile = GameProfile::from_toml_str(sample).expect("Should parse TOML profile");
+        assert_eq!(profile.id, "fallout4");
+        assert_eq!(profile.steam_app_id, Some(377160));
+        assert_eq!(profile.default_executable, Some("Fallout4.exe".to_string()));
+
+        let serialized = profile.to_toml_str().expect("Should serialize TOML");
+        assert!(serialized.contains("fallout4"));
+    }
+
+    #[test]
+    fn test_resolve_precedence() {
+        let custom = GameProfile {
+            id: "cyberpunk_2077".to_string(),
+            name: "Custom Cyberpunk".to_string(),
+            steam_app_id: None,
+            default_executable: Some("custom.exe".to_string()),
+            mappings: Vec::new(),
+        };
+
+        let resolved = GameProfile::resolve("cyberpunk_2077", &[custom]);
+        assert_eq!(resolved.name, "Custom Cyberpunk");
+        assert_eq!(resolved.default_executable, Some("custom.exe".to_string()));
     }
 }

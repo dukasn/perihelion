@@ -7,6 +7,39 @@ use crate::manifest::{OverrideRule, Priority};
 
 pub const VFI_FILENAME: &str = "vfi.json";
 
+/// A persistent file index for a single mod package, serializable to cache.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageFileIndex {
+    pub package_name: String,
+    pub version: String,
+    pub priority: Priority,
+    pub files: Vec<String>,
+}
+
+impl PackageFileIndex {
+    pub fn new(
+        package_name: impl Into<String>,
+        version: impl Into<String>,
+        priority: Priority,
+        files: Vec<String>,
+    ) -> Self {
+        Self {
+            package_name: package_name.into(),
+            version: version.into(),
+            priority,
+            files,
+        }
+    }
+
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileOwner {
     pub mod_name: String,
@@ -57,6 +90,17 @@ impl VirtualFileIndex {
             mod_name: mod_name.into(),
             priority,
         });
+    }
+
+    /// Adds all files from a persistent `PackageFileIndex`, applying an optional path mapping function.
+    pub fn add_package_index<F>(&mut self, index: &PackageFileIndex, map_path: F)
+    where
+        F: Fn(&str) -> String,
+    {
+        for file in &index.files {
+            let mapped = map_path(file);
+            self.add_entry(mapped, &index.package_name, index.priority);
+        }
     }
 
     pub fn detect_conflicts(&self) -> Vec<FileConflict> {
@@ -298,5 +342,30 @@ mod tests {
                 priority: Priority::Highest
             }
         );
+    }
+
+    #[test]
+    fn test_package_file_index_serde_and_merge() {
+        let pkg_index = PackageFileIndex::new(
+            "TestMod",
+            "1.2.0",
+            Priority::High,
+            vec![
+                "textures/diffuse.png".to_string(),
+                "meshes/model.nif".to_string(),
+            ],
+        );
+
+        let json = pkg_index.to_json().expect("Serialization should succeed");
+        let deserialized =
+            PackageFileIndex::from_json(&json).expect("Deserialization should succeed");
+        assert_eq!(pkg_index, deserialized);
+
+        let mut vfi = VirtualFileIndex::new();
+        vfi.add_package_index(&deserialized, |p| format!("data/{p}"));
+
+        assert_eq!(vfi.entries.len(), 2);
+        assert!(vfi.entries.contains_key("data/textures/diffuse.png"));
+        assert!(vfi.entries.contains_key("data/meshes/model.nif"));
     }
 }
