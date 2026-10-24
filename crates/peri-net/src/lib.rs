@@ -12,6 +12,13 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tracing::{info, warn};
 
+pub mod stream;
+pub mod torrent;
+
+pub use stream::{
+    bridge_to_sync, fetch_http_stream, response_to_async_read, BoxedAsyncRead, PieceStreamReceiver,
+};
+
 #[derive(Debug, Error)]
 pub enum NetError {
     #[error("I/O error: {0}")]
@@ -111,10 +118,10 @@ pub async fn fetch_asset(assets: &Assets, destination_file: &Path) -> Result<(),
 pub async fn fetch_magnet(magnet: &str, destination: &Path) -> Result<(), NetError> {
     #[cfg(feature = "bittorrent")]
     {
-        // Feature bittorrent hook for librqbit session
-        Err(NetError::P2pError(
-            "BitTorrent session startup in progress".to_string(),
-        ))
+        let download_dir = destination.parent().unwrap_or_else(|| Path::new("."));
+        let session = torrent::bittorrent::create_torrent_session(download_dir).await?;
+        torrent::bittorrent::download_magnet(&session, magnet).await?;
+        Ok(())
     }
     #[cfg(not(feature = "bittorrent"))]
     {

@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 peri-core.workspace = true
 peri-vfs.workspace = true
-peri-net.workspace = true
+peri-net = { workspace = true, features = ["bittorrent"] }
 peri-archive.workspace = true
 
 clap.workspace = true

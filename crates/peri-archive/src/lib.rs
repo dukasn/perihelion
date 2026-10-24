@@ -31,6 +31,9 @@ pub enum ArchiveError {
     #[error("Missing mandatory root '{MANIFEST_FILENAME}' manifest in .peca archive")]
     MissingManifest,
 
+    #[error("Security violation: {0}")]
+    SecurityViolation(String),
+
     #[error("Checksum mismatch: expected {expected}, calculated {calculated}")]
     ChecksumMismatch {
         expected: String,
@@ -177,26 +180,69 @@ pub fn create_peca(
     Ok(manifest)
 }
 
-/// Extracts a `.peca` archive to `destination_dir`.
-/// Validates that a root `peri.toml` exists upon extraction and returns the parsed manifest.
-pub fn extract_peca(peca_path: &Path, destination_dir: &Path) -> Result<Manifest, ArchiveError> {
-    let file = File::open(peca_path)?;
-    let buf_reader = BufReader::new(file);
-    let decoder = zstd::stream::Decoder::new(buf_reader)
-        .map_err(|e| ArchiveError::Compression(e.to_string()))?;
+/// Extracts a `.peca` (tar.zst) archive on the fly directly from an arbitrary synchronous `Read` stream.
+///
+/// Ensures root `peri.toml` is present, validates against path traversal attacks,
+/// and returns the parsed `(Manifest, PackageFileIndex)`.
+pub fn extract_peca_stream<R: Read>(
+    reader: R,
+    destination_dir: &Path,
+) -> Result<(Manifest, PackageFileIndex), ArchiveError> {
+    fs::create_dir_all(destination_dir)?;
+
+    let decoder =
+        zstd::stream::Decoder::new(reader).map_err(|e| ArchiveError::Compression(e.to_string()))?;
     let mut archive = tar::Archive::new(decoder);
 
-    fs::create_dir_all(destination_dir)?;
-    archive.unpack(destination_dir)?;
+    let mut indexed_files = Vec::new();
+
+    for entry_result in archive.entries()? {
+        let mut entry = entry_result?;
+        let path = entry.path()?.into_owned();
+
+        // Security check: Prevent path traversal attacks (e.g. ../../etc/shadow)
+        if path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(ArchiveError::SecurityViolation(format!(
+                "Path traversal detected in archive entry: {}",
+                path.display()
+            )));
+        }
+
+        let path_str = path.to_string_lossy().to_string();
+        if path_str != MANIFEST_FILENAME && !entry.header().entry_type().is_dir() {
+            indexed_files.push(path_str);
+        }
+
+        entry.unpack_in(destination_dir)?;
+    }
 
     let manifest_path = destination_dir.join(MANIFEST_FILENAME);
     if !manifest_path.exists() {
         return Err(ArchiveError::MissingManifest);
     }
 
-    let manifest_content = fs::read_to_string(manifest_path)?;
+    let manifest_content = fs::read_to_string(&manifest_path)?;
     let manifest = Manifest::from_toml_str(&manifest_content)?;
 
+    let index = PackageFileIndex::new(
+        &manifest.package.name,
+        &manifest.package.version,
+        manifest.package.priority,
+        indexed_files,
+    );
+
+    Ok((manifest, index))
+}
+
+/// Extracts a `.peca` archive from disk to `destination_dir`.
+/// Validates that a root `peri.toml` exists upon extraction and returns the parsed manifest.
+pub fn extract_peca(peca_path: &Path, destination_dir: &Path) -> Result<Manifest, ArchiveError> {
+    let file = File::open(peca_path)?;
+    let buf_reader = BufReader::new(file);
+    let (manifest, _) = extract_peca_stream(buf_reader, destination_dir)?;
     Ok(manifest)
 }
 
@@ -298,5 +344,41 @@ game_id = "skyrim"
             .expect("Load cache should succeed")
             .expect("Cache file should exist");
         assert_eq!(loaded, index);
+    }
+
+    #[test]
+    fn test_extract_peca_stream_in_memory() {
+        let src_dir = tempdir().unwrap();
+        let out_dir = tempdir().unwrap();
+        let extract_dir = tempdir().unwrap();
+
+        let manifest_content = r#"
+[package]
+name = "Streamed Mod"
+author = "Tester"
+version = "3.0.0"
+
+[target]
+game_id = "test_game"
+"#;
+        fs::write(src_dir.path().join(MANIFEST_FILENAME), manifest_content).unwrap();
+        fs::write(src_dir.path().join("content.dat"), "streamed bytes").unwrap();
+
+        let peca_file = out_dir.path().join("stream.peca");
+        create_peca(src_dir.path(), &peca_file, 3).unwrap();
+
+        // Read all archive bytes into in-memory cursor to test stream extraction
+        let bytes = fs::read(&peca_file).unwrap();
+        let cursor = std::io::Cursor::new(bytes);
+
+        let (manifest, index) = extract_peca_stream(cursor, extract_dir.path())
+            .expect("In-memory streaming extraction should succeed");
+
+        assert_eq!(manifest.package.name, "Streamed Mod");
+        assert_eq!(index.files, vec!["content.dat"]);
+        assert_eq!(
+            fs::read_to_string(extract_dir.path().join("content.dat")).unwrap(),
+            "streamed bytes"
+        );
     }
 }
