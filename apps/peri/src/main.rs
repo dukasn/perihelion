@@ -203,7 +203,7 @@ async fn handle_package(args: PackageArgs) -> Result<(), CliError> {
     }
 
     let manifest_content =
-        fs::read_to_string(&manifest_path).map_err(|e| CliError::Manifest(e.to_string()))?;
+        fs::read_to_string(&manifest_path).map_err(|e| CliError::Workspace(e.to_string()))?;
     let manifest = Manifest::from_toml_str(&manifest_content)?;
 
     let output_path = args.output.unwrap_or_else(|| {
@@ -305,12 +305,11 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
     let mut game_profile = GameProfile::generic("generic");
 
     if root_manifest_path.exists() {
-        if let Ok(content) = fs::read_to_string(&root_manifest_path) {
-            if let Ok(root_manifest) = Manifest::from_toml_str(&content) {
-                overrides = root_manifest.overrides.into_iter().collect();
-                game_profile = resolve_game_profile(&workspace, &root_manifest.target.game_id);
-            }
-        }
+        let content = fs::read_to_string(&root_manifest_path)
+            .map_err(|e| CliError::Workspace(e.to_string()))?;
+        let root_manifest = Manifest::from_toml_str(&content)?;
+        overrides = root_manifest.overrides.into_iter().collect();
+        game_profile = resolve_game_profile(&workspace, &root_manifest.target.game_id);
     }
 
     let mut graph = DependencyGraph::new();
@@ -366,24 +365,22 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
 
 async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
     let workspace = args.workspace;
-    let cache_dir = workspace.join(CACHE_MODS_DIR);
-
-    if !cache_dir.exists() {
-        println!("ℹ️  No mods cached in {}", cache_dir.display());
-        return Ok(());
-    }
-
     let root_manifest_path = workspace.join(MANIFEST_FILENAME);
     let mut overrides: HashMap<String, OverrideRule> = HashMap::new();
     let mut game_profile = GameProfile::generic("generic");
 
     if root_manifest_path.exists() {
-        if let Ok(content) = fs::read_to_string(&root_manifest_path) {
-            if let Ok(root_manifest) = Manifest::from_toml_str(&content) {
-                overrides = root_manifest.overrides.into_iter().collect();
-                game_profile = resolve_game_profile(&workspace, &root_manifest.target.game_id);
-            }
-        }
+        let content = fs::read_to_string(&root_manifest_path)
+            .map_err(|e| CliError::Workspace(e.to_string()))?;
+        let root_manifest = Manifest::from_toml_str(&content)?;
+        overrides = root_manifest.overrides.into_iter().collect();
+        game_profile = resolve_game_profile(&workspace, &root_manifest.target.game_id);
+    }
+
+    let cache_dir = workspace.join(CACHE_MODS_DIR);
+    if !cache_dir.exists() {
+        println!("ℹ️  No mods cached in {}", cache_dir.display());
+        return Ok(());
     }
 
     let mut graph = DependencyGraph::new();

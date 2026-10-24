@@ -3,21 +3,17 @@ use thiserror::Error;
 
 #[derive(Debug, Error, Diagnostic)]
 pub enum CliError {
-    #[error("Manifest error: {0}")]
-    #[diagnostic(
-        code(peri::manifest_error),
-        help("Check your peri.toml file syntax and required fields.")
-    )]
-    Manifest(String),
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Manifest(#[from] peri_core::ManifestError),
 
-    #[error("Dependency resolution failed: {0}")]
-    #[diagnostic(
-        code(peri::resolve_error),
-        help(
-            "Ensure all required dependencies are installed and there are no cyclic relationships."
-        )
-    )]
-    Resolve(String),
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Resolve(#[from] peri_core::ResolveError),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Profile(#[from] peri_core::ProfileError),
 
     #[error("Archive error: {0}")]
     #[diagnostic(
@@ -53,21 +49,12 @@ pub enum CliError {
     Execution(String),
 }
 
-impl From<peri_core::ManifestError> for CliError {
-    fn from(err: peri_core::ManifestError) -> Self {
-        CliError::Manifest(err.to_string())
-    }
-}
-
-impl From<peri_core::ResolveError> for CliError {
-    fn from(err: peri_core::ResolveError) -> Self {
-        CliError::Resolve(err.to_string())
-    }
-}
-
 impl From<peri_archive::ArchiveError> for CliError {
     fn from(err: peri_archive::ArchiveError) -> Self {
-        CliError::Archive(err.to_string())
+        match err {
+            peri_archive::ArchiveError::Manifest(m) => CliError::Manifest(m),
+            other => CliError::Archive(other.to_string()),
+        }
     }
 }
 
