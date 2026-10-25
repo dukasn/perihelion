@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "apps/peri",
+    "apps/perid",
     "crates/peri-vfs",
     "crates/peri-net",
     "crates/peri-archive",
@@ -51,4 +52,5 @@ hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 tempfile = "3.17"
 librqbit = { version = "9.0" }
+shellexpand = "3.1"
 

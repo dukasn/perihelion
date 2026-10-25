@@ -1,0 +1,16 @@
+[package]
+name = "perid"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Perihelion Background Seeding Daemon"
+
+[dependencies]
+peri-net = { workspace = true, features = ["bittorrent"] }
+tokio.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+miette.workspace = true
+shellexpand.workspace = true

@@ -1,0 +1,14 @@
+[Unit]
+Description=Perihelion P2P Seeding Daemon (perid)
+Documentation=https://github.com/dukasn/perihelion
+After=network.target
+
+[Service]
+Type=simple
+# By default, runs perid from user cargo or system bin
+ExecStart=/usr/bin/env perid --upload-limit 2048
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
