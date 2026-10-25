@@ -15,6 +15,7 @@ use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{unshare, CloneFlags};
 use nix::unistd::{getegid, geteuid};
 use thiserror::Error;
+use tracing::{info, warn};
 
 #[derive(Debug, Error)]
 pub enum VfsError {
@@ -165,6 +166,128 @@ pub fn unmount_overlay(mount_point: &Path) -> Result<(), VfsError> {
     Ok(())
 }
 
+/// Execution sandbox policy for confining untrusted game binaries and mod scripts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxPolicy {
+    /// Remount the host root filesystem ('/') as read-only inside the namespace.
+    pub readonly_root: bool,
+    /// Explicit whitelist of paths that retain read-write access inside the namespace.
+    pub writable_paths: Vec<PathBuf>,
+}
+
+impl Default for SandboxPolicy {
+    fn default() -> Self {
+        Self {
+            readonly_root: true,
+            writable_paths: vec![PathBuf::from("/tmp"), PathBuf::from("/dev/shm")],
+        }
+    }
+}
+
+impl SandboxPolicy {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_readonly_root(mut self, enabled: bool) -> Self {
+        self.readonly_root = enabled;
+        self
+    }
+
+    pub fn with_writable_path(mut self, path: PathBuf) -> Self {
+        if !self.writable_paths.contains(&path) {
+            self.writable_paths.push(path);
+        }
+        self
+    }
+
+    pub fn with_writable_paths(mut self, paths: impl IntoIterator<Item = PathBuf>) -> Self {
+        for p in paths {
+            self = self.with_writable_path(p);
+        }
+        self
+    }
+}
+
+/// Applies Phase B execution boundary hardening:
+/// 1. Makes all mount events private to this isolated namespace.
+/// 2. Remounts the entire root filesystem as read-only.
+/// 3. Whitelists only specific directories (upperdir, workdir, compatdata, /tmp) as writable.
+fn apply_sandbox_policy(plan: &VfsPlan, policy: &SandboxPolicy) -> Result<(), VfsError> {
+    // 1. Prevent mount events from propagating to or from the parent namespace
+    let _ = mount(
+        None::<&str>,
+        "/",
+        None::<&str>,
+        MsFlags::MS_REC | MsFlags::MS_PRIVATE,
+        None::<&str>,
+    );
+
+    if policy.readonly_root {
+        info!("🔒 Enforcing Zero-Trust execution boundary: remounting '/' read-only");
+
+        // Collect all explicitly whitelisted writable paths
+        let mut writable = policy.writable_paths.clone();
+        if let Some(upper) = &plan.upper_dir {
+            writable.push(upper.clone());
+        }
+        if let Some(work) = &plan.work_dir {
+            writable.push(work.clone());
+        }
+
+        // Bind mount each writable path onto itself so it becomes an independent mount point
+        for path in &writable {
+            if path.exists() {
+                let _ = mount(
+                    Some(path.as_path()),
+                    path.as_path(),
+                    None::<&str>,
+                    MsFlags::MS_BIND | MsFlags::MS_REC,
+                    None::<&str>,
+                );
+            }
+        }
+
+        // Bind mount / onto itself to establish an owned root mount inside our namespace
+        let _ = mount(
+            Some("/"),
+            "/",
+            None::<&str>,
+            MsFlags::MS_BIND | MsFlags::MS_REC,
+            None::<&str>,
+        );
+
+        // Remount root filesystem as read-only
+        if let Err(e) = mount(
+            Some("none"),
+            "/",
+            None::<&str>,
+            MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY | MsFlags::MS_REC,
+            None::<&str>,
+        ) {
+            warn!(
+                error = %e,
+                "Read-only root remount skipped (restricted by host/container environment); continuing with namespace sandboxing"
+            );
+        }
+
+        // Re-ensure whitelisted writable paths maintain read-write flags
+        for path in &writable {
+            if path.exists() {
+                let _ = mount(
+                    Some("none"),
+                    path.as_path(),
+                    None::<&str>,
+                    MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_REC,
+                    None::<&str>,
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Spawns an isolated Linux user + mount namespace and executes a target command within it.
 pub fn execute_in_isolated_namespace(
     plan: &VfsPlan,
@@ -181,20 +304,40 @@ pub fn execute_in_isolated_namespace_with_env(
     args: &[String],
     env_vars: &[(String, String)],
 ) -> Result<i32, VfsError> {
+    execute_in_isolated_namespace_with_policy(
+        plan,
+        &SandboxPolicy::default(),
+        command,
+        args,
+        env_vars,
+    )
+}
+
+/// Spawns an isolated Linux user + mount namespace with a custom sandbox policy and environment variables.
+pub fn execute_in_isolated_namespace_with_policy(
+    plan: &VfsPlan,
+    policy: &SandboxPolicy,
+    command: &str,
+    args: &[String],
+    env_vars: &[(String, String)],
+) -> Result<i32, VfsError> {
     let euid = geteuid();
     let egid = getegid();
 
-    // Spawn new user and mount namespaces
+    // 1. Spawn new user and mount namespaces
     unshare(CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS)
         .map_err(|e| VfsError::NamespaceFailed(format!("unshare failed: {e}")))?;
 
-    // Map UID and GID to allow unprivileged root inside the namespace
+    // 2. Map UID and GID to allow unprivileged root inside the namespace
     setup_id_mapping(euid.as_raw(), egid.as_raw())?;
 
-    // Mount OverlayFS within the isolated namespace
+    // 3. Apply Zero-Trust execution boundary (read-only root + writable whitelisting)
+    apply_sandbox_policy(plan, policy)?;
+
+    // 4. Mount OverlayFS within the isolated namespace
     mount_overlay(plan)?;
 
-    // Execute target process
+    // 5. Execute target process
     let mut cmd = Command::new(command);
     cmd.args(args).current_dir(&plan.mount_point);
 
@@ -210,8 +353,24 @@ pub fn execute_in_isolated_namespace_with_env(
 }
 
 /// Executes a Windows game binary via Proton inside the sandboxed OverlayFS namespace.
+/// Automatically whitelists the Proton compatdata and Wine prefix directories as writable.
 pub fn execute_proton_in_isolated_namespace(
     plan: &VfsPlan,
+    proton: &ProtonLaunch,
+    game_executable: &str,
+    args: &[String],
+) -> Result<i32, VfsError> {
+    let policy = SandboxPolicy::default()
+        .with_writable_path(proton.compat_data_path.clone())
+        .with_writable_path(proton.wine_prefix.clone());
+
+    execute_proton_in_isolated_namespace_with_policy(plan, &policy, proton, game_executable, args)
+}
+
+/// Executes a Windows game binary via Proton with an explicit sandbox policy.
+pub fn execute_proton_in_isolated_namespace_with_policy(
+    plan: &VfsPlan,
+    policy: &SandboxPolicy,
     proton: &ProtonLaunch,
     game_executable: &str,
     args: &[String],
@@ -219,8 +378,9 @@ pub fn execute_proton_in_isolated_namespace(
     let mut proton_args = vec!["run".to_string(), game_executable.to_string()];
     proton_args.extend(args.iter().cloned());
 
-    execute_in_isolated_namespace_with_env(
+    execute_in_isolated_namespace_with_policy(
         plan,
+        policy,
         &proton.runner.to_string_lossy(),
         &proton_args,
         &proton.env_vars,
@@ -276,5 +436,22 @@ mod tests {
         let opts = plan.format_mount_options().unwrap();
         assert!(opts.contains("upperdir="));
         assert!(opts.contains("workdir="));
+    }
+
+    #[test]
+    fn test_sandbox_policy_configuration() {
+        let policy = SandboxPolicy::default()
+            .with_readonly_root(true)
+            .with_writable_path(PathBuf::from("/steamapps/compatdata/489830"))
+            .with_writable_paths(vec![PathBuf::from("/tmp/custom")]);
+
+        assert!(policy.readonly_root);
+        assert!(policy
+            .writable_paths
+            .contains(&PathBuf::from("/steamapps/compatdata/489830")));
+        assert!(policy
+            .writable_paths
+            .contains(&PathBuf::from("/tmp/custom")));
+        assert!(policy.writable_paths.contains(&PathBuf::from("/tmp")));
     }
 }
