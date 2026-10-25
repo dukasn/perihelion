@@ -1,0 +1,150 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Overview,
+    Mods,
+    Conflicts,
+    Downloads,
+    Profiles,
+}
+
+impl Tab {
+    pub fn index(&self) -> usize {
+        match self {
+            Tab::Overview => 0,
+            Tab::Mods => 1,
+            Tab::Conflicts => 2,
+            Tab::Downloads => 3,
+            Tab::Profiles => 4,
+        }
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            0 => Tab::Overview,
+            1 => Tab::Mods,
+            2 => Tab::Conflicts,
+            3 => Tab::Downloads,
+            4 => Tab::Profiles,
+            _ => Tab::Overview,
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        Self::from_index((self.index() + 1) % 5)
+    }
+
+    pub fn prev(&self) -> Self {
+        Self::from_index((self.index() + 4) % 5)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverviewFocus {
+    CommandInput,
+    RecentProfiles,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModsFocus {
+    Search,
+    Categories,
+    Table,
+    Inspector,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictsFocus {
+    AutoResolve,
+    OptionA,
+    OptionB,
+    ResolvedList,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadsFocus {
+    Input,
+    Queue,
+    Curated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfilesFocus {
+    NewProfileInput,
+    GameSelector,
+    ProfileList,
+    Inspector,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputValidation {
+    Idle,
+    Valid(String),
+    Warning(String),
+    Invalid(String),
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    Tick,
+    Render,
+    Quit,
+    NextTab,
+    PrevTab,
+    SetTab(Tab),
+    FocusNext,
+    FocusPrev,
+    SwitchPaneFocus,
+    CursorUp,
+    CursorDown,
+    CursorPageUp,
+    CursorPageDown,
+    CursorHome,
+    CursorEnd,
+    ActivateFocused,
+    ToggleMod,
+    ToggleAllMods,
+    CyclePriority,
+    CyclePriorityReverse,
+    MoveModUp,
+    MoveModDown,
+    ToggleInspector,
+    StartSearch,
+    EndSearch,
+    SearchChar(char),
+    SearchBackspace,
+    ClearSearchAndFilters,
+    FilterCategory(Option<String>),
+    CycleCategory,
+    CycleCategoryReverse,
+    ResolveConflictChoice { index: usize, winner_id: String },
+    ToggleConflictWinner,
+    AutoResolveConflicts,
+    SelectProfile(usize),
+    StartProfileInput,
+    StartOverviewInput,
+    CycleTargetGame,
+    CycleTargetGameReverse,
+    FixDiagnostic,
+    StartDownload(String),
+    StartDownloadInput,
+    TogglePauseDownload,
+    InstallCuratedPackage,
+    InputChar(char),
+    InputBackspace,
+    InputDeleteWord,
+    InputClear,
+    SubmitInput,
+    CancelInput,
+    LaunchGame,
+    ToggleHelp,
+    CloseModal,
+}

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "apps/peri",
     "apps/perid",
+    "apps/helion",
     "crates/peri-vfs",
     "crates/peri-net",
     "crates/peri-archive",
@@ -37,6 +38,11 @@ pubgrub = "0.3"
 # Diagnostics & Error handling
 thiserror = "2.0"
 miette = { version = "7.4", features = ["fancy"] }
+
+# TUI Primitives
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
+futures = "0.3"
 
 # CLI & Telemetry
 clap = { version = "4.5", features = ["derive", "cargo", "env"] }

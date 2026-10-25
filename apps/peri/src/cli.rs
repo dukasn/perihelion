@@ -6,10 +6,16 @@ use std::path::PathBuf;
     name = "peri",
     author = "Perihelion Contributors",
     version,
-    about = "Game-agnostic native Linux package manager & VFS orchestrator",
-    long_about = "Perihelion is a high-performance native Linux mod manager and VFS orchestrator\n\
-                  that uses kernel-level OverlayFS and isolated namespaces to deliver safe,\n\
-                  declarative game modding."
+    about = "Mod Fearlessly. Share Instantly.",
+    long_about = "Mod Fearlessly. Share Instantly.\n\n\
+                  No 40-step installation guides. No throttled 2 MB/s download caps.\n\
+                  Perihelion turns entire modded setups into lightweight, shareable\n\
+                  blueprints you can sync and play in one command.\n\n\
+                  ENGINEERED DIFFERENTLY (UNDER THE HOOD):\n\
+                  • Kernel OverlayFS: In-memory file composition with zero disk duplication.\n\
+                  • Unprivileged Namespaces: Complete sandbox isolation without root / sudo.\n\
+                  • P2P Swarm Transport: Uncapped multi-gigabyte BitTorrent .peca streaming.\n\
+                  • Deterministic DAG Solver: Conflict-free 3-tier waterfall resolution."
 )]
 pub struct Cli {
     #[arg(short, long, global = true, help = "Enable verbose debug logs")]

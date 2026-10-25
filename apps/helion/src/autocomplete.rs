@@ -1,0 +1,275 @@
+//! Smart, reusable autocomplete and autosuggestion engine for Helion input fields.
+//!
+//! Provides inline ghost-text suggestions and command/slug completions across:
+//! - Overview Quick-Action Command Palette
+//! - Mod Load Order search filter
+//! - Downloads URI / Magnet / Package Slug input
+//! - Multi-Game Profile creation name input
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutocompleteSuggestion {
+    /// Full replacement string when the suggestion is accepted (via Tab or Right Arrow).
+    pub completed_text: String,
+    /// The ghost text suffix displayed inline after the cursor in dimmed styling.
+    pub ghost_suffix: String,
+    /// Optional short semantic explanation of what this completion is.
+    pub description: Option<String>,
+}
+
+pub struct Autocomplete;
+
+impl Autocomplete {
+    /// Reusable helper to match a query against a slice of candidate strings.
+    /// If candidate starts with query (case-insensitive) and has remaining characters,
+    /// returns the suggestion with exact casing from the candidate.
+    pub fn match_candidate(query: &str, candidates: &[&str]) -> Option<AutocompleteSuggestion> {
+        let trimmed_query = query.trim_start();
+        if trimmed_query.is_empty() {
+            return None;
+        }
+
+        let query_lower = trimmed_query.to_ascii_lowercase();
+
+        for &candidate in candidates {
+            let cand_lower = candidate.to_ascii_lowercase();
+            if cand_lower.starts_with(&query_lower) && cand_lower.len() > query_lower.len() {
+                let suffix = &candidate[trimmed_query.len()..];
+                return Some(AutocompleteSuggestion {
+                    completed_text: candidate.to_string(),
+                    ghost_suffix: suffix.to_string(),
+                    description: None,
+                });
+            }
+        }
+        None
+    }
+
+    /// Smart contextual autocomplete for Overview command palette.
+    pub fn suggest_overview(query: &str, app: &crate::app::App) -> Option<AutocompleteSuggestion> {
+        let trimmed = query.trim_start();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let lower = trimmed.to_ascii_lowercase();
+
+        // 1. Root command verbs
+        const ROOT_COMMANDS: &[&str] = &[
+            "clone ",
+            "download ",
+            "switch ",
+            "profile ",
+            "search ",
+            "launch",
+            "conflicts",
+            "mods",
+            "downloads",
+            "profiles",
+            "help",
+        ];
+
+        if !lower.contains(' ') {
+            if let Some(s) = Self::match_candidate(trimmed, ROOT_COMMANDS) {
+                return Some(s);
+            }
+        }
+
+        // 2. Sub-command arguments
+        if lower.starts_with("clone ") || lower.starts_with("download ") {
+            let prefix = if lower.starts_with("clone ") {
+                "clone "
+            } else {
+                "download "
+            };
+            let arg = &trimmed[prefix.len()..];
+
+            let mut candidates: Vec<String> = vec![
+                "essential_bug_fixes".to_string(),
+                "nordic_ui_minimalist".to_string(),
+                "realistic_water_two".to_string(),
+                "skse64".to_string(),
+                "https://mods.perihelion.io/".to_string(),
+            ];
+            for p in &app.curated_packages {
+                candidates.push(p.title.to_lowercase().replace(' ', "_"));
+            }
+            for m in &app.mods {
+                candidates.push(m.id.clone());
+            }
+
+            let candidate_refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+            if let Some(mut s) = Self::match_candidate(arg, &candidate_refs) {
+                s.completed_text = format!("{}{}", prefix, s.completed_text);
+                return Some(s);
+            }
+        } else if lower.starts_with("switch ") || lower.starts_with("profile ") {
+            let prefix = if lower.starts_with("switch ") {
+                "switch "
+            } else {
+                "profile "
+            };
+            let arg = &trimmed[prefix.len()..];
+
+            let mut candidates: Vec<String> = Vec::new();
+            for p in &app.profiles {
+                candidates.push(p.name.clone());
+                candidates.push(p.game_short.clone());
+            }
+            for g in &app.game_catalog {
+                candidates.push(g.short_name.clone());
+            }
+
+            let candidate_refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+            if let Some(mut s) = Self::match_candidate(arg, &candidate_refs) {
+                s.completed_text = format!("{}{}", prefix, s.completed_text);
+                return Some(s);
+            }
+        } else if lower.starts_with("search ") || lower.starts_with("find ") {
+            let prefix = if lower.starts_with("search ") {
+                "search "
+            } else {
+                "find "
+            };
+            let arg = &trimmed[prefix.len()..];
+
+            let mut candidates: Vec<String> = Vec::new();
+            for m in &app.mods {
+                candidates.push(m.name.clone());
+                candidates.push(m.id.clone());
+                candidates.push(m.category.clone());
+            }
+
+            let candidate_refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+            if let Some(mut s) = Self::match_candidate(arg, &candidate_refs) {
+                s.completed_text = format!("{}{}", prefix, s.completed_text);
+                return Some(s);
+            }
+        }
+
+        None
+    }
+
+    /// Smart autocomplete for Mod Search filter.
+    pub fn suggest_mod_search(
+        query: &str,
+        app: &crate::app::App,
+    ) -> Option<AutocompleteSuggestion> {
+        let trimmed = query.trim_start();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let mut candidates: Vec<String> = Vec::new();
+        for m in &app.mods {
+            candidates.push(m.name.clone());
+            candidates.push(m.id.clone());
+            candidates.push(m.category.clone());
+            candidates.push(m.author.clone());
+        }
+
+        let candidate_refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+        Self::match_candidate(trimmed, &candidate_refs)
+    }
+
+    /// Smart autocomplete for Downloads URI input.
+    pub fn suggest_download_uri(
+        query: &str,
+        app: &crate::app::App,
+    ) -> Option<AutocompleteSuggestion> {
+        let trimmed = query.trim_start();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let mut candidates: Vec<String> = vec![
+            "https://mods.perihelion.io/".to_string(),
+            "magnet:?xt=urn:btih:".to_string(),
+            "realistic_water_two.peca".to_string(),
+            "essential_bug_fixes.peca".to_string(),
+            "nordic_ui.peca".to_string(),
+            "skyui_next.peca".to_string(),
+            "skse64_build.peca".to_string(),
+        ];
+        for d in &app.downloads {
+            candidates.push(format!("{}.peca", d.name.to_lowercase().replace(' ', "_")));
+        }
+        for p in &app.curated_packages {
+            candidates.push(format!("{}.peca", p.title.to_lowercase().replace(' ', "_")));
+        }
+        for m in &app.mods {
+            candidates.push(format!("{}.peca", m.id));
+        }
+
+        let candidate_refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+        Self::match_candidate(trimmed, &candidate_refs)
+    }
+
+    /// Smart autocomplete for New Profile name input.
+    pub fn suggest_profile_name(
+        query: &str,
+        app: &crate::app::App,
+    ) -> Option<AutocompleteSuggestion> {
+        let trimmed = query.trim_start();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let mut candidates: Vec<String> = Vec::new();
+        if let Some(game) = app.game_catalog.get(app.new_profile_game_idx) {
+            match game.game_id.as_str() {
+                "skyrim_se" => {
+                    candidates.push("Requiem Hardcore".to_string());
+                    candidates.push("Vanilla+ Light Fixes".to_string());
+                    candidates.push("Nolvus High-End".to_string());
+                    candidates.push("Lore-Friendly Visuals".to_string());
+                }
+                "cyberpunk_2077" => {
+                    candidates.push("Cyberware & Vehicles".to_string());
+                    candidates.push("Night City Enhanced".to_string());
+                    candidates.push("Edgerunners Mode".to_string());
+                }
+                "starfield" => {
+                    candidates.push("Constellation Fleet".to_string());
+                    candidates.push("NASAPunk Explorers".to_string());
+                    candidates.push("Shipbuilder Deluxe".to_string());
+                }
+                "baldurs_gate_3" => {
+                    candidates.push("Tactician Plus".to_string());
+                    candidates.push("Honor Mode Overhaul".to_string());
+                    candidates.push("5e Spells & Classes".to_string());
+                }
+                _ => {}
+            }
+        }
+
+        for p in &app.profiles {
+            candidates.push(p.name.clone());
+        }
+
+        let candidate_refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+        Self::match_candidate(trimmed, &candidate_refs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_match_candidate_prefix() {
+        let candidates = ["clone ", "download ", "switch ", "launch"];
+        let res = Autocomplete::match_candidate("cl", &candidates);
+        assert!(res.is_some());
+        let s = res.unwrap();
+        assert_eq!(s.completed_text, "clone ");
+        assert_eq!(s.ghost_suffix, "one ");
+
+        // Exact match with no suffix returns None
+        assert!(Autocomplete::match_candidate("clone ", &candidates).is_none());
+
+        // Case-insensitive match canonicalizes to candidate casing
+        let res2 = Autocomplete::match_candidate("SW", &candidates);
+        assert!(res2.is_some());
+        assert_eq!(res2.unwrap().completed_text, "switch ");
+    }
+}

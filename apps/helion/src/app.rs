@@ -1,0 +1,2267 @@
+use peri_core::{
+    manifest::{Manifest, Priority},
+    profile::{GameProfile, LayoutMapping},
+};
+use std::path::Path;
+
+use crate::action::{
+    Action, ConflictsFocus, DownloadsFocus, InputValidation, ModsFocus, OverviewFocus,
+    ProfilesFocus, StatusLevel, Tab,
+};
+
+#[derive(Debug, Clone)]
+pub struct ModItem {
+    pub id: String,
+    pub name: String,
+    pub active: bool,
+    pub category: String,
+    pub priority: Priority,
+    pub version: String,
+    pub author: String,
+    pub description: String,
+    pub affected_files: Vec<String>,
+    pub has_conflict: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConflictOption {
+    pub mod_id: String,
+    pub mod_name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConflictCard {
+    pub title: String,
+    pub file_path: String,
+    pub option_a: ConflictOption,
+    pub option_b: ConflictOption,
+    pub winner_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedConflict {
+    pub title: String,
+    pub file_path: String,
+    pub resolution_note: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DownloadItem {
+    pub name: String,
+    pub progress: f32,
+    pub speed: String,
+    pub status: String,
+    pub peers_info: String,
+    pub paused: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CuratedPackage {
+    pub title: String,
+    pub desc: String,
+    pub is_installed: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiagnosticAlert {
+    pub level: String,
+    pub title: String,
+    pub message: String,
+    pub action_text: String,
+    pub resolved: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct GameCatalogEntry {
+    pub game_id: String,
+    pub short_name: String,
+    pub full_name: String,
+    pub steam_app_id: u64,
+    pub executable: String,
+    pub default_proton: String,
+    pub install_dir: String,
+    pub mappings: Vec<LayoutMapping>,
+    pub default_diagnostic: DiagnosticAlert,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProfileItem {
+    pub name: String,
+    pub game_id: String,
+    pub game_short: String,
+    pub game_full_name: String,
+    pub steam_app_id: u64,
+    pub executable: String,
+    pub install_dir: String,
+    pub upper_dir: String,
+    pub mappings: Vec<LayoutMapping>,
+    pub desc: String,
+    pub mod_count: usize,
+    pub proton_version: String,
+    pub is_active: bool,
+    pub diagnostic: DiagnosticAlert,
+}
+
+#[derive(Debug)]
+pub struct App {
+    pub active_tab: Tab,
+    pub overview_focus: OverviewFocus,
+    pub overview_input: String,
+    pub overview_input_active: bool,
+    pub overview_input_error: Option<String>,
+    pub overview_profile_cursor: usize,
+    pub game_title: String,
+    pub proton_version: String,
+    pub mods: Vec<ModItem>,
+    pub cursor_index: usize,
+    pub mods_focus: ModsFocus,
+    pub inspector_file_cursor: usize,
+    pub search_query: String,
+    pub search_active: bool,
+    pub search_error: Option<String>,
+    pub category_filter: Option<String>,
+    pub show_inspector: bool,
+    pub conflicts: Vec<ConflictCard>,
+    pub conflicts_focus: ConflictsFocus,
+    pub resolved_conflicts: Vec<ResolvedConflict>,
+    pub active_conflict_cursor: usize,
+    pub downloads: Vec<DownloadItem>,
+    pub download_focus: DownloadsFocus,
+    pub download_cursor: usize,
+    pub curated_cursor: usize,
+    pub download_input: String,
+    pub download_input_active: bool,
+    pub download_input_error: Option<String>,
+    pub curated_packages: Vec<CuratedPackage>,
+    pub game_catalog: Vec<GameCatalogEntry>,
+    pub new_profile_game_idx: usize,
+    pub profiles: Vec<ProfileItem>,
+    pub profiles_focus: ProfilesFocus,
+    pub profile_cursor: usize,
+    pub profile_input: String,
+    pub profile_input_active: bool,
+    pub profile_input_error: Option<String>,
+    pub diagnostics: Vec<DiagnosticAlert>,
+    pub show_help: bool,
+    pub status_message: Option<String>,
+    pub status_level: StatusLevel,
+    pub should_quit: bool,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl App {
+    pub fn new() -> Self {
+        let mut app = Self {
+            active_tab: Tab::Overview,
+            overview_focus: OverviewFocus::CommandInput,
+            overview_input: String::new(),
+            overview_input_active: false,
+            overview_input_error: None,
+            overview_profile_cursor: 0,
+            game_title: "Skyrim SE [Requiem]".to_string(),
+            proton_version: "GE-Proton 9-23".to_string(),
+            mods: Vec::new(),
+            cursor_index: 0,
+            mods_focus: ModsFocus::Table,
+            inspector_file_cursor: 0,
+            search_query: String::new(),
+            search_active: false,
+            search_error: None,
+            category_filter: None,
+            show_inspector: true,
+            conflicts: Vec::new(),
+            conflicts_focus: ConflictsFocus::OptionA,
+            resolved_conflicts: Vec::new(),
+            active_conflict_cursor: 0,
+            downloads: Vec::new(),
+            download_focus: DownloadsFocus::Queue,
+            download_cursor: 0,
+            curated_cursor: 0,
+            download_input: String::new(),
+            download_input_active: false,
+            download_input_error: None,
+            curated_packages: Vec::new(),
+            game_catalog: Vec::new(),
+            new_profile_game_idx: 0,
+            profiles: Vec::new(),
+            profiles_focus: ProfilesFocus::ProfileList,
+            profile_cursor: 0,
+            profile_input: String::new(),
+            profile_input_active: false,
+            profile_input_error: None,
+            diagnostics: Vec::new(),
+            show_help: false,
+            status_message: None,
+            status_level: StatusLevel::Info,
+            should_quit: false,
+        };
+
+        app.populate_defaults();
+        app.try_load_workspace();
+        app
+    }
+
+    fn set_status(&mut self, level: StatusLevel, msg: impl Into<String>) {
+        self.status_level = level;
+        self.status_message = Some(msg.into());
+    }
+
+    pub fn is_any_input_active(&self) -> bool {
+        self.search_active
+            || self.download_input_active
+            || self.profile_input_active
+            || self.overview_input_active
+    }
+
+    /// Automatically accepts and applies an inline autocomplete suggestion if available.
+    /// Returns true if a suggestion was accepted and applied.
+    pub fn accept_autocomplete(&mut self) -> bool {
+        if self.overview_input_active {
+            if let Some(s) =
+                crate::autocomplete::Autocomplete::suggest_overview(&self.overview_input, self)
+            {
+                self.overview_input = s.completed_text;
+                self.overview_input_error = None;
+                return true;
+            }
+        } else if self.search_active {
+            if let Some(s) =
+                crate::autocomplete::Autocomplete::suggest_mod_search(&self.search_query, self)
+            {
+                self.search_query = s.completed_text;
+                self.search_error = None;
+                self.clamp_mod_cursor();
+                return true;
+            }
+        } else if self.download_input_active {
+            if let Some(s) =
+                crate::autocomplete::Autocomplete::suggest_download_uri(&self.download_input, self)
+            {
+                self.download_input = s.completed_text;
+                self.download_input_error = None;
+                return true;
+            }
+        } else if self.profile_input_active {
+            if let Some(s) =
+                crate::autocomplete::Autocomplete::suggest_profile_name(&self.profile_input, self)
+            {
+                self.profile_input = s.completed_text;
+                self.profile_input_error = None;
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn current_focus_label(&self) -> &'static str {
+        match self.active_tab {
+            Tab::Overview => match self.overview_focus {
+                OverviewFocus::CommandInput => "Quick Action Bar",
+                OverviewFocus::RecentProfiles => "Recent Workspaces",
+            },
+            Tab::Mods => match self.mods_focus {
+                ModsFocus::Search => "Filter Input",
+                ModsFocus::Categories => "Category Bar",
+                ModsFocus::Table => "Mod Load Order",
+                ModsFocus::Inspector => "Package Inspector",
+            },
+            Tab::Conflicts => match self.conflicts_focus {
+                ConflictsFocus::OptionA => "Option A Layer",
+                ConflictsFocus::OptionB => "Option B Layer",
+                ConflictsFocus::AutoResolve => "Auto-Resolve",
+                ConflictsFocus::ResolvedList => "Resolved List",
+            },
+            Tab::Downloads => match self.download_focus {
+                DownloadsFocus::Input => "URI / Magnet Input",
+                DownloadsFocus::Queue => "Transfer Queue",
+                DownloadsFocus::Curated => "Curated Bundles",
+            },
+            Tab::Profiles => match self.profiles_focus {
+                ProfilesFocus::NewProfileInput => "New Profile Name",
+                ProfilesFocus::GameSelector => "Target Game Selector",
+                ProfilesFocus::ProfileList => "Profiles List",
+                ProfilesFocus::Inspector => "Profile Inspector",
+            },
+        }
+    }
+
+    pub fn validate_overview_input(&self) -> InputValidation {
+        if let Some(err) = &self.overview_input_error {
+            return InputValidation::Invalid(err.clone());
+        }
+        let trimmed = self.overview_input.trim();
+        if trimmed.is_empty() {
+            return InputValidation::Idle;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        if lower == "launch" || lower == "play" || lower == "run" {
+            InputValidation::Valid(format!(
+                "Launch active game ({}) with VFS overlay",
+                self.game_title
+            ))
+        } else if lower.starts_with("clone ") || lower.starts_with("download ") {
+            let arg = if lower.starts_with("clone ") {
+                &trimmed[6..]
+            } else {
+                &trimmed[9..]
+            };
+            if arg.trim().is_empty() {
+                InputValidation::Warning(
+                    "Provide package slug, magnet URI, or .peca URL".to_string(),
+                )
+            } else {
+                InputValidation::Valid(format!("Clone & mount package '{}'", arg.trim()))
+            }
+        } else if lower.starts_with("switch ") || lower.starts_with("profile ") {
+            let arg = if lower.starts_with("switch ") {
+                &trimmed[7..]
+            } else {
+                &trimmed[8..]
+            };
+            if arg.trim().is_empty() {
+                InputValidation::Warning("Provide profile or game name".to_string())
+            } else {
+                InputValidation::Valid(format!("Switch active profile to '{}'", arg.trim()))
+            }
+        } else if lower.starts_with("search ") || lower.starts_with("find ") {
+            let query = if lower.starts_with("search ") {
+                &trimmed[7..]
+            } else {
+                &trimmed[5..]
+            };
+            InputValidation::Valid(format!("Search mod index for '{}'", query.trim()))
+        } else if lower == "conflicts" || lower == "resolve" {
+            InputValidation::Valid("Open VFI Conflict Resolver".to_string())
+        } else if lower == "mods" {
+            InputValidation::Valid("Open Mod Load Order & Priority".to_string())
+        } else if lower == "downloads" {
+            InputValidation::Valid("Open Package Transport & Swarm Queue".to_string())
+        } else if lower == "profiles" {
+            InputValidation::Valid("Open Multi-Game Profiles Inspector".to_string())
+        } else if lower == "help" {
+            InputValidation::Valid("Open keyboard cheatsheet & guide".to_string())
+        } else if lower.starts_with("magnet:")
+            || lower.starts_with("https://")
+            || lower.ends_with(".peca")
+        {
+            InputValidation::Valid("Direct package/profile stream URI".to_string())
+        } else {
+            InputValidation::Valid(format!("Execute command or search query: '{}'", trimmed))
+        }
+    }
+
+    pub fn search_validation(&self) -> InputValidation {
+        if let Some(err) = &self.search_error {
+            return InputValidation::Invalid(err.clone());
+        }
+        if self.search_query.is_empty() {
+            return InputValidation::Idle;
+        }
+        if self.search_query.len() > 64 {
+            return InputValidation::Invalid("Query exceeds 64 character limit".to_string());
+        }
+        let count = self.filtered_mods().len();
+        if count == 0 {
+            InputValidation::Warning(format!("0 packages match '{}'", self.search_query))
+        } else {
+            InputValidation::Valid(format!("{} matched", count))
+        }
+    }
+
+    pub fn validate_download_input(&self) -> InputValidation {
+        if let Some(err) = &self.download_input_error {
+            return InputValidation::Invalid(err.clone());
+        }
+        let trimmed = self.download_input.trim();
+        if trimmed.is_empty() {
+            return InputValidation::Idle;
+        }
+        if trimmed.contains(char::is_whitespace) {
+            return InputValidation::Invalid(
+                "URI or package slug cannot contain spaces".to_string(),
+            );
+        }
+        if trimmed.starts_with("magnet:") {
+            if trimmed.contains("xt=urn:") && trimmed.len() > 20 {
+                InputValidation::Valid("Valid P2P Magnet URI".to_string())
+            } else {
+                InputValidation::Invalid(
+                    "Malformed Magnet URI (expected magnet:?xt=urn:btih:...)".to_string(),
+                )
+            }
+        } else if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+            let after_scheme = trimmed
+                .trim_start_matches("https://")
+                .trim_start_matches("http://");
+            if after_scheme.len() >= 4 && after_scheme.contains('.') {
+                if trimmed.ends_with(".peca") {
+                    InputValidation::Valid("Valid .peca Archive Stream".to_string())
+                } else {
+                    InputValidation::Valid("Valid HTTP/S Package URL".to_string())
+                }
+            } else {
+                InputValidation::Invalid("Incomplete URL hostname or domain".to_string())
+            }
+        } else if trimmed.contains("://") {
+            InputValidation::Invalid("Unsupported protocol (use https:// or magnet:?)".to_string())
+        } else if trimmed.len() < 3 {
+            InputValidation::Warning("Type at least 3 chars for package slug".to_string())
+        } else if trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '/' | '.'))
+        {
+            InputValidation::Valid("Valid Registry Package Slug".to_string())
+        } else {
+            InputValidation::Invalid(
+                "Invalid characters (use alphanumeric, '-', '_', '/', or URL)".to_string(),
+            )
+        }
+    }
+
+    pub fn validate_profile_input(&self) -> InputValidation {
+        if let Some(err) = &self.profile_input_error {
+            return InputValidation::Invalid(err.clone());
+        }
+        let trimmed = self.profile_input.trim();
+        if trimmed.is_empty() {
+            return InputValidation::Idle;
+        }
+        if trimmed.len() < 3 {
+            return InputValidation::Warning("Profile name must be at least 3 chars".to_string());
+        }
+        if trimmed.len() > 32 {
+            return InputValidation::Invalid("Profile name exceeds 32 chars".to_string());
+        }
+        if self
+            .profiles
+            .iter()
+            .any(|p| p.name.eq_ignore_ascii_case(trimmed))
+        {
+            return InputValidation::Invalid("A profile with this name already exists".to_string());
+        }
+        if !trimmed
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '+' | '.'))
+        {
+            return InputValidation::Invalid(
+                "Invalid characters (use letters, numbers, spaces, '-', '_', '+', '.')".to_string(),
+            );
+        }
+        InputValidation::Valid("Valid new profile name".to_string())
+    }
+
+    fn populate_defaults(&mut self) {
+        let skyrim_gp = GameProfile::skyrim_se();
+        let cp2077_gp = GameProfile::cyberpunk_2077();
+        let starfield_gp = GameProfile::starfield();
+
+        self.game_catalog = vec![
+            GameCatalogEntry {
+                game_id: skyrim_gp.id.clone(),
+                short_name: "Skyrim SE".to_string(),
+                full_name: skyrim_gp.name.clone(),
+                steam_app_id: skyrim_gp.steam_app_id.unwrap_or(489830),
+                executable: skyrim_gp
+                    .default_executable
+                    .clone()
+                    .unwrap_or_else(|| "SkyrimSE.exe".to_string()),
+                default_proton: "GE-Proton 9-23".to_string(),
+                install_dir: "~/.local/share/Steam/steamapps/common/Skyrim Special Edition"
+                    .to_string(),
+                mappings: skyrim_gp.mappings.clone(),
+                default_diagnostic: DiagnosticAlert {
+                    level: "WARN".to_string(),
+                    title: "Script Extender (SKSE64) Recommended".to_string(),
+                    message:
+                        "SkyUI and DLL plugins require SKSE64 v2.2.6+ mounted in the top VFS layer."
+                            .to_string(),
+                    action_text: "Press [f] to verify/install SKSE64".to_string(),
+                    resolved: false,
+                },
+            },
+            GameCatalogEntry {
+                game_id: cp2077_gp.id.clone(),
+                short_name: "Cyberpunk 2077".to_string(),
+                full_name: cp2077_gp.name.clone(),
+                steam_app_id: cp2077_gp.steam_app_id.unwrap_or(1091500),
+                executable: cp2077_gp
+                    .default_executable
+                    .clone()
+                    .unwrap_or_else(|| "bin/x64/Cyberpunk2077.exe".to_string()),
+                default_proton: "GE-Proton 9-20".to_string(),
+                install_dir: "~/.local/share/Steam/steamapps/common/Cyberpunk 2077".to_string(),
+                mappings: cp2077_gp.mappings.clone(),
+                default_diagnostic: DiagnosticAlert {
+                    level: "WARN".to_string(),
+                    title: "RED4ext & Cyber Engine Tweaks Check".to_string(),
+                    message:
+                        "WINEDLLOVERRIDES=\"version=n,b\" is required in Proton launch flags for RED4ext."
+                            .to_string(),
+                    action_text: "Press [f] to apply DLL override".to_string(),
+                    resolved: false,
+                },
+            },
+            GameCatalogEntry {
+                game_id: starfield_gp.id.clone(),
+                short_name: "Starfield".to_string(),
+                full_name: starfield_gp.name.clone(),
+                steam_app_id: starfield_gp.steam_app_id.unwrap_or(1716740),
+                executable: starfield_gp
+                    .default_executable
+                    .clone()
+                    .unwrap_or_else(|| "Starfield.exe".to_string()),
+                default_proton: "Valve Proton Experimental".to_string(),
+                install_dir: "~/.local/share/Steam/steamapps/common/Starfield".to_string(),
+                mappings: starfield_gp.mappings.clone(),
+                default_diagnostic: DiagnosticAlert {
+                    level: "OK".to_string(),
+                    title: "Starfield Custom.ini & Archive Invalidation".to_string(),
+                    message: "bInvalidateOlderFiles=1 is active inside isolated profile config."
+                        .to_string(),
+                    action_text: "[VERIFIED]".to_string(),
+                    resolved: true,
+                },
+            },
+            GameCatalogEntry {
+                game_id: "baldurs_gate_3".to_string(),
+                short_name: "Baldur's Gate 3".to_string(),
+                full_name: "Baldur's Gate 3".to_string(),
+                steam_app_id: 1086940,
+                executable: "bin/bg3_dx11.exe".to_string(),
+                default_proton: "Proton 9.0-3".to_string(),
+                install_dir: "~/.local/share/Steam/steamapps/common/Baldurs Gate 3".to_string(),
+                mappings: vec![
+                    LayoutMapping {
+                        from_prefix: "Mods".to_string(),
+                        to_prefix: "Data/Mods".to_string(),
+                    },
+                    LayoutMapping {
+                        from_prefix: "Public".to_string(),
+                        to_prefix: "Data/Public".to_string(),
+                    },
+                    LayoutMapping {
+                        from_prefix: "bin".to_string(),
+                        to_prefix: "bin".to_string(),
+                    },
+                ],
+                default_diagnostic: DiagnosticAlert {
+                    level: "OK".to_string(),
+                    title: "BG3 Script Extender (DWrite.dll) Mounted".to_string(),
+                    message: "Norbyte Script Extender v18 is mapped to bin/DWrite.dll.".to_string(),
+                    action_text: "[VERIFIED]".to_string(),
+                    resolved: true,
+                },
+            },
+        ];
+
+        self.mods = vec![
+            ModItem {
+                id: "ussep".to_string(),
+                name: "Unofficial Skyrim Special Edition Patch".to_string(),
+                active: true,
+                category: "Fixes".to_string(),
+                priority: Priority::Lowest,
+                version: "4.2.9".to_string(),
+                author: "Unofficial Patch Team".to_string(),
+                description: "Comprehensive bugfix resolving thousands of gameplay, quest, and audio bugs.".to_string(),
+                affected_files: vec![
+                    "Skyrim.esm (override)".to_string(),
+                    "Unofficial Patch.esp".to_string(),
+                    "textures/patch/...".to_string(),
+                ],
+                has_conflict: false,
+            },
+            ModItem {
+                id: "skyui".to_string(),
+                name: "SkyUI Modern Interface".to_string(),
+                active: true,
+                category: "UI".to_string(),
+                priority: Priority::High,
+                version: "5.2.0".to_string(),
+                author: "SkyUI Team".to_string(),
+                description: "Complete inventory and menu overhaul designed for PC keyboards and mouse navigation.".to_string(),
+                affected_files: vec![
+                    "interface/skyui.swf".to_string(),
+                    "scripts/ski_activeeffects.pex".to_string(),
+                ],
+                has_conflict: false,
+            },
+            ModItem {
+                id: "ordinator".to_string(),
+                name: "Ordinator - Perks of Skyrim".to_string(),
+                active: true,
+                category: "Gameplay".to_string(),
+                priority: Priority::Default,
+                version: "9.31.0".to_string(),
+                author: "Enai Siaion".to_string(),
+                description: "Overhauls perk trees with 400+ new perks to increase character depth and diversity.".to_string(),
+                affected_files: vec![
+                    "scripts/ord_perkscripts.pex".to_string(),
+                    "Ordinator - Perks of Skyrim.esp".to_string(),
+                ],
+                has_conflict: false,
+            },
+            ModItem {
+                id: "skyland".to_string(),
+                name: "Skyland Complete Textures".to_string(),
+                active: true,
+                category: "Visuals".to_string(),
+                priority: Priority::Default,
+                version: "4.1.2".to_string(),
+                author: "Skyking2020".to_string(),
+                description: "Complete visual overhaul featuring photorealistic 2K/4K landscapes and architecture.".to_string(),
+                affected_files: vec![
+                    "textures/landscape/dirt01.dds".to_string(),
+                    "textures/architecture/whiterun/stone.dds".to_string(),
+                ],
+                has_conflict: false,
+            },
+            ModItem {
+                id: "better_iron_weapons".to_string(),
+                name: "Better Iron Weapons (4K)".to_string(),
+                active: true,
+                category: "Visuals".to_string(),
+                priority: Priority::High,
+                version: "1.2.0".to_string(),
+                author: "LeanWolf".to_string(),
+                description: "Realistic metallic finish and high-resolution reflections for standard weaponry.".to_string(),
+                affected_files: vec![
+                    "textures/weapons/iron_sword.dds".to_string(),
+                    "meshes/weapons/iron_sword.nif".to_string(),
+                ],
+                has_conflict: true,
+            },
+        ];
+
+        self.conflicts = vec![ConflictCard {
+            title: "Iron Weapons Appearance Conflict".to_string(),
+            file_path: "textures/weapons/iron_sword.dds".to_string(),
+            option_a: ConflictOption {
+                mod_id: "better_iron_weapons".to_string(),
+                mod_name: "Better Iron Weapons (4K)".to_string(),
+                description: "Realistic metallic finish and high-resolution reflections."
+                    .to_string(),
+            },
+            option_b: ConflictOption {
+                mod_id: "skyland".to_string(),
+                mod_name: "Skyland Complete Textures".to_string(),
+                description: "Unified landscape & item textures matching whole world overhaul."
+                    .to_string(),
+            },
+            winner_id: Some("skyland".to_string()),
+        }];
+
+        self.resolved_conflicts = vec![ResolvedConflict {
+            title: "Whiterun Architecture Cobblestone".to_string(),
+            file_path: "textures/architecture/whiterun/stone.dds".to_string(),
+            resolution_note:
+                "Automatically resolved by priority rule: [Skyland Complete] overrides [Unofficial Patch]."
+                    .to_string(),
+        }];
+
+        self.downloads = vec![DownloadItem {
+            name: "Realistic Water Two (Next-Gen)".to_string(),
+            progress: 42.0,
+            speed: "38.4 MB/s".to_string(),
+            status: "SWARMING".to_string(),
+            peers_info: "14 DHT Peers + 2 Web Seeds".to_string(),
+            paused: false,
+        }];
+
+        self.curated_packages = vec![
+            CuratedPackage {
+                title: "Essential Bug Fixes 2026".to_string(),
+                desc: "SKSE, Engine Fixes, Unofficial Patch, and Memory Allocator.".to_string(),
+                is_installed: false,
+            },
+            CuratedPackage {
+                title: "Nordic UI Minimalist Bundle".to_string(),
+                desc: "Clean dark HUD with 60fps inventory and ultrawide support.".to_string(),
+                is_installed: false,
+            },
+        ];
+
+        self.profiles = vec![
+            ProfileItem {
+                name: "Requiem Overhaul".to_string(),
+                game_id: self.game_catalog[0].game_id.clone(),
+                game_short: self.game_catalog[0].short_name.clone(),
+                game_full_name: self.game_catalog[0].full_name.clone(),
+                steam_app_id: self.game_catalog[0].steam_app_id,
+                executable: self.game_catalog[0].executable.clone(),
+                install_dir: self.game_catalog[0].install_dir.clone(),
+                upper_dir: "~/.local/share/perihelion/profiles/skyrim_requiem/upper".to_string(),
+                mappings: self.game_catalog[0].mappings.clone(),
+                desc: "Hardcore roleplaying setup with de-leveled world, 2K textures, and custom combat.".to_string(),
+                mod_count: 5,
+                proton_version: "GE-Proton 9-23".to_string(),
+                is_active: true,
+                diagnostic: self.game_catalog[0].default_diagnostic.clone(),
+            },
+            ProfileItem {
+                name: "Vanilla+ Light Fixes".to_string(),
+                game_id: self.game_catalog[0].game_id.clone(),
+                game_short: self.game_catalog[0].short_name.clone(),
+                game_full_name: self.game_catalog[0].full_name.clone(),
+                steam_app_id: self.game_catalog[0].steam_app_id,
+                executable: self.game_catalog[0].executable.clone(),
+                install_dir: self.game_catalog[0].install_dir.clone(),
+                upper_dir: "~/.local/share/perihelion/profiles/skyrim_vanilla_plus/upper"
+                    .to_string(),
+                mappings: self.game_catalog[0].mappings.clone(),
+                desc: "Lightweight bug fixes and original visuals with Steam achievements enabled."
+                    .to_string(),
+                mod_count: 2,
+                proton_version: "Valve Proton Experimental".to_string(),
+                is_active: false,
+                diagnostic: DiagnosticAlert {
+                    level: "OK".to_string(),
+                    title: "Clean Engine & Achievement Enabler".to_string(),
+                    message: "SSE Engine Fixes TOML configured for vanilla achievement parity."
+                        .to_string(),
+                    action_text: "[VERIFIED]".to_string(),
+                    resolved: true,
+                },
+            },
+            ProfileItem {
+                name: "Cyberware & Vehicles".to_string(),
+                game_id: self.game_catalog[1].game_id.clone(),
+                game_short: self.game_catalog[1].short_name.clone(),
+                game_full_name: self.game_catalog[1].full_name.clone(),
+                steam_app_id: self.game_catalog[1].steam_app_id,
+                executable: self.game_catalog[1].executable.clone(),
+                install_dir: self.game_catalog[1].install_dir.clone(),
+                upper_dir: "~/.local/share/perihelion/profiles/cp2077_cyberware/upper".to_string(),
+                mappings: self.game_catalog[1].mappings.clone(),
+                desc: "Overhauls combat implants, REDscript cyberware slots, and adds 14 custom vehicles.".to_string(),
+                mod_count: 14,
+                proton_version: "GE-Proton 9-20".to_string(),
+                is_active: false,
+                diagnostic: self.game_catalog[1].default_diagnostic.clone(),
+            },
+        ];
+
+        self.diagnostics = vec![self.profiles[0].diagnostic.clone()];
+    }
+
+    pub fn try_load_workspace(&mut self) {
+        if Path::new("peri.toml").exists() {
+            if let Ok(content) = std::fs::read_to_string("peri.toml") {
+                if let Ok(manifest) = Manifest::from_toml_str(&content) {
+                    self.game_title =
+                        format!("{} [{}]", manifest.target.game_id, manifest.package.name);
+                    if !manifest.dependencies.is_empty() {
+                        for (dep, _) in manifest.dependencies {
+                            if !self.mods.iter().any(|m| m.id == dep) {
+                                self.mods.push(ModItem {
+                                    id: dep.clone(),
+                                    name: dep.clone(),
+                                    active: true,
+                                    category: "General".to_string(),
+                                    priority: Priority::Default,
+                                    version: "1.0.0".to_string(),
+                                    author: "Unknown".to_string(),
+                                    description: "Workspace dependency".to_string(),
+                                    affected_files: vec![],
+                                    has_conflict: false,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn filtered_mods(&self) -> Vec<(usize, &ModItem)> {
+        self.mods
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| {
+                let matches_query = if self.search_query.is_empty() {
+                    true
+                } else {
+                    let q = self.search_query.to_lowercase();
+                    m.name.to_lowercase().contains(&q)
+                        || m.category.to_lowercase().contains(&q)
+                        || m.author.to_lowercase().contains(&q)
+                        || m.id.to_lowercase().contains(&q)
+                };
+
+                let matches_category = if let Some(cat) = &self.category_filter {
+                    m.category.eq_ignore_ascii_case(cat)
+                } else {
+                    true
+                };
+
+                matches_query && matches_category
+            })
+            .collect()
+    }
+
+    pub fn selected_mod(&self) -> Option<&ModItem> {
+        let filtered = self.filtered_mods();
+        if filtered.is_empty() {
+            None
+        } else {
+            let idx = self.cursor_index.min(filtered.len().saturating_sub(1));
+            Some(filtered[idx].1)
+        }
+    }
+
+    pub fn selected_profile(&self) -> Option<&ProfileItem> {
+        if self.profiles.is_empty() {
+            None
+        } else {
+            let idx = self.profile_cursor.min(self.profiles.len() - 1);
+            Some(&self.profiles[idx])
+        }
+    }
+
+    fn clamp_mod_cursor(&mut self) {
+        let total = self.filtered_mods().len();
+        if total == 0 {
+            self.cursor_index = 0;
+        } else if self.cursor_index >= total {
+            self.cursor_index = total - 1;
+        }
+        self.inspector_file_cursor = 0;
+    }
+
+    fn delete_last_word(s: &mut String) {
+        while s.ends_with(char::is_whitespace) {
+            s.pop();
+        }
+        while let Some(c) = s.chars().last() {
+            if c.is_whitespace() || matches!(c, '/' | '-' | '_' | ':') {
+                s.pop();
+                break;
+            }
+            s.pop();
+        }
+    }
+
+    pub fn handle_action(&mut self, action: Action) {
+        match action {
+            Action::Quit => {
+                self.should_quit = true;
+            }
+            Action::NextTab => {
+                self.active_tab = self.active_tab.next();
+            }
+            Action::PrevTab => {
+                self.active_tab = self.active_tab.prev();
+            }
+            Action::SetTab(tab) => {
+                self.search_active = false;
+                self.download_input_active = false;
+                self.profile_input_active = false;
+                self.overview_input_active = false;
+                self.active_tab = tab;
+            }
+            Action::FocusNext => match self.active_tab {
+                Tab::Overview => {
+                    self.overview_input_active = false;
+                    self.overview_focus = match self.overview_focus {
+                        OverviewFocus::CommandInput => OverviewFocus::RecentProfiles,
+                        OverviewFocus::RecentProfiles => OverviewFocus::CommandInput,
+                    };
+                }
+                Tab::Mods => {
+                    self.mods_focus = match self.mods_focus {
+                        ModsFocus::Table => {
+                            if self.show_inspector {
+                                ModsFocus::Inspector
+                            } else {
+                                ModsFocus::Search
+                            }
+                        }
+                        ModsFocus::Inspector => ModsFocus::Search,
+                        ModsFocus::Search => ModsFocus::Categories,
+                        ModsFocus::Categories => ModsFocus::Table,
+                    };
+                    self.search_active = self.mods_focus == ModsFocus::Search;
+                }
+                Tab::Conflicts => {
+                    self.conflicts_focus = match self.conflicts_focus {
+                        ConflictsFocus::OptionA => ConflictsFocus::OptionB,
+                        ConflictsFocus::OptionB => ConflictsFocus::AutoResolve,
+                        ConflictsFocus::AutoResolve => ConflictsFocus::ResolvedList,
+                        ConflictsFocus::ResolvedList => ConflictsFocus::OptionA,
+                    };
+                }
+                Tab::Downloads => {
+                    self.download_input_active = false;
+                    self.download_focus = match self.download_focus {
+                        DownloadsFocus::Input => DownloadsFocus::Queue,
+                        DownloadsFocus::Queue => DownloadsFocus::Curated,
+                        DownloadsFocus::Curated => DownloadsFocus::Input,
+                    };
+                }
+                Tab::Profiles => {
+                    self.profile_input_active = false;
+                    self.profiles_focus = match self.profiles_focus {
+                        ProfilesFocus::ProfileList => ProfilesFocus::Inspector,
+                        ProfilesFocus::Inspector => ProfilesFocus::NewProfileInput,
+                        ProfilesFocus::NewProfileInput => ProfilesFocus::GameSelector,
+                        ProfilesFocus::GameSelector => ProfilesFocus::ProfileList,
+                    };
+                }
+            },
+            Action::FocusPrev => match self.active_tab {
+                Tab::Overview => {
+                    self.overview_input_active = false;
+                    self.overview_focus = match self.overview_focus {
+                        OverviewFocus::CommandInput => OverviewFocus::RecentProfiles,
+                        OverviewFocus::RecentProfiles => OverviewFocus::CommandInput,
+                    };
+                }
+                Tab::Mods => {
+                    self.mods_focus = match self.mods_focus {
+                        ModsFocus::Table => ModsFocus::Categories,
+                        ModsFocus::Categories => ModsFocus::Search,
+                        ModsFocus::Search => {
+                            if self.show_inspector {
+                                ModsFocus::Inspector
+                            } else {
+                                ModsFocus::Table
+                            }
+                        }
+                        ModsFocus::Inspector => ModsFocus::Table,
+                    };
+                    self.search_active = self.mods_focus == ModsFocus::Search;
+                }
+                Tab::Conflicts => {
+                    self.conflicts_focus = match self.conflicts_focus {
+                        ConflictsFocus::OptionA => ConflictsFocus::ResolvedList,
+                        ConflictsFocus::OptionB => ConflictsFocus::OptionA,
+                        ConflictsFocus::AutoResolve => ConflictsFocus::OptionB,
+                        ConflictsFocus::ResolvedList => ConflictsFocus::AutoResolve,
+                    };
+                }
+                Tab::Downloads => {
+                    self.download_input_active = false;
+                    self.download_focus = match self.download_focus {
+                        DownloadsFocus::Input => DownloadsFocus::Curated,
+                        DownloadsFocus::Queue => DownloadsFocus::Input,
+                        DownloadsFocus::Curated => DownloadsFocus::Queue,
+                    };
+                }
+                Tab::Profiles => {
+                    self.profile_input_active = false;
+                    self.profiles_focus = match self.profiles_focus {
+                        ProfilesFocus::ProfileList => ProfilesFocus::GameSelector,
+                        ProfilesFocus::GameSelector => ProfilesFocus::NewProfileInput,
+                        ProfilesFocus::NewProfileInput => ProfilesFocus::Inspector,
+                        ProfilesFocus::Inspector => ProfilesFocus::ProfileList,
+                    };
+                }
+            },
+            Action::SwitchPaneFocus => {
+                self.handle_action(Action::FocusNext);
+            }
+            Action::ActivateFocused => match self.active_tab {
+                Tab::Overview => match self.overview_focus {
+                    OverviewFocus::CommandInput => {
+                        self.overview_input_active = true;
+                    }
+                    OverviewFocus::RecentProfiles => {
+                        let idx = self.overview_profile_cursor;
+                        self.handle_action(Action::SelectProfile(idx));
+                    }
+                },
+                Tab::Mods => match self.mods_focus {
+                    ModsFocus::Search => self.handle_action(Action::StartSearch),
+                    ModsFocus::Categories => self.handle_action(Action::CycleCategory),
+                    ModsFocus::Table | ModsFocus::Inspector => {
+                        self.handle_action(Action::ToggleMod)
+                    }
+                },
+                Tab::Conflicts => match self.conflicts_focus {
+                    ConflictsFocus::AutoResolve => {
+                        self.handle_action(Action::AutoResolveConflicts);
+                    }
+                    ConflictsFocus::OptionA => {
+                        if let Some(card) = self.conflicts.get(self.active_conflict_cursor) {
+                            let id = card.option_a.mod_id.clone();
+                            self.handle_action(Action::ResolveConflictChoice {
+                                index: self.active_conflict_cursor,
+                                winner_id: id,
+                            });
+                        }
+                    }
+                    ConflictsFocus::OptionB => {
+                        if let Some(card) = self.conflicts.get(self.active_conflict_cursor) {
+                            let id = card.option_b.mod_id.clone();
+                            self.handle_action(Action::ResolveConflictChoice {
+                                index: self.active_conflict_cursor,
+                                winner_id: id,
+                            });
+                        }
+                    }
+                    ConflictsFocus::ResolvedList => {
+                        self.handle_action(Action::ToggleConflictWinner);
+                    }
+                },
+                Tab::Downloads => match self.download_focus {
+                    DownloadsFocus::Input => self.handle_action(Action::StartDownloadInput),
+                    DownloadsFocus::Queue => self.handle_action(Action::TogglePauseDownload),
+                    DownloadsFocus::Curated => self.handle_action(Action::InstallCuratedPackage),
+                },
+                Tab::Profiles => match self.profiles_focus {
+                    ProfilesFocus::NewProfileInput => self.handle_action(Action::StartProfileInput),
+                    ProfilesFocus::GameSelector => self.handle_action(Action::CycleTargetGame),
+                    ProfilesFocus::ProfileList => {
+                        self.handle_action(Action::SelectProfile(self.profile_cursor));
+                    }
+                    ProfilesFocus::Inspector => self.handle_action(Action::FixDiagnostic),
+                },
+            },
+            Action::CursorUp => match self.active_tab {
+                Tab::Overview => {
+                    self.overview_focus = OverviewFocus::RecentProfiles;
+                    if self.overview_profile_cursor > 0 {
+                        self.overview_profile_cursor -= 1;
+                    } else {
+                        self.overview_focus = OverviewFocus::CommandInput;
+                    }
+                }
+                Tab::Mods => match self.mods_focus {
+                    ModsFocus::Inspector => {
+                        self.inspector_file_cursor = self.inspector_file_cursor.saturating_sub(1);
+                    }
+                    _ => {
+                        self.mods_focus = ModsFocus::Table;
+                        let total = self.filtered_mods().len();
+                        if total > 0 {
+                            self.cursor_index = self.cursor_index.saturating_sub(1);
+                            self.inspector_file_cursor = 0;
+                        }
+                    }
+                },
+                Tab::Conflicts => {
+                    self.active_conflict_cursor = self.active_conflict_cursor.saturating_sub(1);
+                }
+                Tab::Downloads => match self.download_focus {
+                    DownloadsFocus::Curated => {
+                        if self.curated_cursor > 0 {
+                            self.curated_cursor -= 1;
+                        } else {
+                            self.download_focus = DownloadsFocus::Queue;
+                        }
+                    }
+                    DownloadsFocus::Queue => {
+                        if self.download_cursor > 0 {
+                            self.download_cursor -= 1;
+                        } else {
+                            self.download_focus = DownloadsFocus::Input;
+                        }
+                    }
+                    DownloadsFocus::Input => {}
+                },
+                Tab::Profiles => {
+                    self.profiles_focus = ProfilesFocus::ProfileList;
+                    self.profile_cursor = self.profile_cursor.saturating_sub(1);
+                }
+            },
+            Action::CursorDown => match self.active_tab {
+                Tab::Overview => match self.overview_focus {
+                    OverviewFocus::CommandInput => {
+                        self.overview_focus = OverviewFocus::RecentProfiles;
+                    }
+                    OverviewFocus::RecentProfiles => {
+                        let total = self.profiles.len();
+                        if self.overview_profile_cursor + 1 < total {
+                            self.overview_profile_cursor += 1;
+                        }
+                    }
+                },
+                Tab::Mods => match self.mods_focus {
+                    ModsFocus::Inspector => {
+                        let max_files = self
+                            .selected_mod()
+                            .map(|m| m.affected_files.len())
+                            .unwrap_or(0);
+                        if max_files > 0 {
+                            self.inspector_file_cursor =
+                                (self.inspector_file_cursor + 1).min(max_files.saturating_sub(1));
+                        }
+                    }
+                    _ => {
+                        self.mods_focus = ModsFocus::Table;
+                        let total = self.filtered_mods().len();
+                        if total > 0 {
+                            self.cursor_index =
+                                (self.cursor_index + 1).min(total.saturating_sub(1));
+                            self.inspector_file_cursor = 0;
+                        }
+                    }
+                },
+                Tab::Conflicts => {
+                    let total = self.conflicts.len();
+                    if total > 0 {
+                        self.active_conflict_cursor =
+                            (self.active_conflict_cursor + 1).min(total.saturating_sub(1));
+                    }
+                }
+                Tab::Downloads => match self.download_focus {
+                    DownloadsFocus::Input => {
+                        self.download_focus = DownloadsFocus::Queue;
+                    }
+                    DownloadsFocus::Queue => {
+                        let total = self.downloads.len();
+                        if self.download_cursor + 1 < total {
+                            self.download_cursor += 1;
+                        } else {
+                            self.download_focus = DownloadsFocus::Curated;
+                        }
+                    }
+                    DownloadsFocus::Curated => {
+                        let total = self.curated_packages.len();
+                        if total > 0 {
+                            self.curated_cursor =
+                                (self.curated_cursor + 1).min(total.saturating_sub(1));
+                        }
+                    }
+                },
+                Tab::Profiles => {
+                    self.profiles_focus = ProfilesFocus::ProfileList;
+                    let total = self.profiles.len();
+                    if total > 0 {
+                        self.profile_cursor =
+                            (self.profile_cursor + 1).min(total.saturating_sub(1));
+                    }
+                }
+            },
+            Action::CursorPageUp => match self.active_tab {
+                Tab::Mods => {
+                    self.cursor_index = self.cursor_index.saturating_sub(5);
+                }
+                Tab::Profiles => {
+                    self.profile_cursor = 0;
+                }
+                _ => {}
+            },
+            Action::CursorPageDown => match self.active_tab {
+                Tab::Mods => {
+                    let total = self.filtered_mods().len();
+                    if total > 0 {
+                        self.cursor_index = (self.cursor_index + 5).min(total.saturating_sub(1));
+                    }
+                }
+                Tab::Profiles => {
+                    let total = self.profiles.len();
+                    if total > 0 {
+                        self.profile_cursor = total.saturating_sub(1);
+                    }
+                }
+                _ => {}
+            },
+            Action::CursorHome => match self.active_tab {
+                Tab::Overview => self.overview_profile_cursor = 0,
+                Tab::Mods => self.cursor_index = 0,
+                Tab::Conflicts => self.active_conflict_cursor = 0,
+                Tab::Downloads => {
+                    self.download_cursor = 0;
+                    self.curated_cursor = 0;
+                }
+                Tab::Profiles => self.profile_cursor = 0,
+            },
+            Action::CursorEnd => match self.active_tab {
+                Tab::Overview => {
+                    let total = self.profiles.len();
+                    if total > 0 {
+                        self.overview_profile_cursor = total.saturating_sub(1);
+                    }
+                }
+                Tab::Mods => {
+                    let total = self.filtered_mods().len();
+                    if total > 0 {
+                        self.cursor_index = total.saturating_sub(1);
+                    }
+                }
+                Tab::Conflicts => {
+                    let total = self.conflicts.len();
+                    if total > 0 {
+                        self.active_conflict_cursor = total.saturating_sub(1);
+                    }
+                }
+                Tab::Downloads => {
+                    self.download_focus = DownloadsFocus::Curated;
+                    let total = self.curated_packages.len();
+                    if total > 0 {
+                        self.curated_cursor = total.saturating_sub(1);
+                    }
+                }
+                Tab::Profiles => {
+                    let total = self.profiles.len();
+                    if total > 0 {
+                        self.profile_cursor = total.saturating_sub(1);
+                    }
+                }
+            },
+            Action::ToggleMod => {
+                let filtered = self.filtered_mods();
+                if !filtered.is_empty() {
+                    let idx = self.cursor_index.min(filtered.len().saturating_sub(1));
+                    let real_idx = filtered[idx].0;
+                    self.mods[real_idx].active = !self.mods[real_idx].active;
+                    let name = self.mods[real_idx].name.clone();
+                    let is_on = self.mods[real_idx].active;
+                    if is_on {
+                        self.set_status(
+                            StatusLevel::Success,
+                            format!("Enabled '{}' in OverlayFS stack", name),
+                        );
+                    } else {
+                        self.set_status(
+                            StatusLevel::Warning,
+                            format!("Disabled '{}' (unmounted from VFS plan)", name),
+                        );
+                    }
+                }
+            }
+            Action::ToggleAllMods => {
+                let indices: Vec<usize> =
+                    self.filtered_mods().into_iter().map(|(i, _)| i).collect();
+                if !indices.is_empty() {
+                    let any_inactive = indices.iter().any(|&i| !self.mods[i].active);
+                    for i in &indices {
+                        self.mods[*i].active = any_inactive;
+                    }
+                    if any_inactive {
+                        self.set_status(
+                            StatusLevel::Success,
+                            format!("Enabled all {} visible packages", indices.len()),
+                        );
+                    } else {
+                        self.set_status(
+                            StatusLevel::Warning,
+                            format!("Disabled all {} visible packages", indices.len()),
+                        );
+                    }
+                }
+            }
+            Action::CyclePriority => {
+                let filtered = self.filtered_mods();
+                if !filtered.is_empty() {
+                    let idx = self.cursor_index.min(filtered.len().saturating_sub(1));
+                    let real_idx = filtered[idx].0;
+                    let current = self.mods[real_idx].priority;
+                    let next = match current {
+                        Priority::Lowest => Priority::Low,
+                        Priority::Low => Priority::Default,
+                        Priority::Default => Priority::High,
+                        Priority::High => Priority::Highest,
+                        Priority::Highest => Priority::Absolute,
+                        Priority::Absolute => Priority::Lowest,
+                    };
+                    self.mods[real_idx].priority = next;
+                    let name = self.mods[real_idx].name.clone();
+                    self.set_status(
+                        StatusLevel::Info,
+                        format!("Updated '{}' priority tier to {:?}", name, next),
+                    );
+                }
+            }
+            Action::CyclePriorityReverse => {
+                let filtered = self.filtered_mods();
+                if !filtered.is_empty() {
+                    let idx = self.cursor_index.min(filtered.len().saturating_sub(1));
+                    let real_idx = filtered[idx].0;
+                    let current = self.mods[real_idx].priority;
+                    let prev = match current {
+                        Priority::Lowest => Priority::Absolute,
+                        Priority::Low => Priority::Lowest,
+                        Priority::Default => Priority::Low,
+                        Priority::High => Priority::Default,
+                        Priority::Highest => Priority::High,
+                        Priority::Absolute => Priority::Highest,
+                    };
+                    self.mods[real_idx].priority = prev;
+                    let name = self.mods[real_idx].name.clone();
+                    self.set_status(
+                        StatusLevel::Info,
+                        format!("Updated '{}' priority tier to {:?}", name, prev),
+                    );
+                }
+            }
+            Action::MoveModUp => {
+                let filtered = self.filtered_mods();
+                if !filtered.is_empty() {
+                    let idx = self.cursor_index.min(filtered.len().saturating_sub(1));
+                    let real_idx = filtered[idx].0;
+                    if real_idx > 0 {
+                        self.mods.swap(real_idx, real_idx - 1);
+                        self.cursor_index = self.cursor_index.saturating_sub(1);
+                        let name = self.mods[real_idx - 1].name.clone();
+                        self.set_status(
+                            StatusLevel::Info,
+                            format!("Moved '{}' up to load order #{:02}", name, real_idx),
+                        );
+                    }
+                }
+            }
+            Action::MoveModDown => {
+                let filtered = self.filtered_mods();
+                if !filtered.is_empty() {
+                    let idx = self.cursor_index.min(filtered.len().saturating_sub(1));
+                    let real_idx = filtered[idx].0;
+                    if real_idx + 1 < self.mods.len() {
+                        self.mods.swap(real_idx, real_idx + 1);
+                        let total = self.filtered_mods().len();
+                        self.cursor_index = (self.cursor_index + 1).min(total.saturating_sub(1));
+                        let name = self.mods[real_idx + 1].name.clone();
+                        self.set_status(
+                            StatusLevel::Info,
+                            format!("Moved '{}' down to load order #{:02}", name, real_idx + 2),
+                        );
+                    }
+                }
+            }
+            Action::ToggleInspector => {
+                self.show_inspector = !self.show_inspector;
+                if !self.show_inspector && self.mods_focus == ModsFocus::Inspector {
+                    self.mods_focus = ModsFocus::Table;
+                }
+            }
+            Action::StartSearch => {
+                self.mods_focus = ModsFocus::Search;
+                self.search_active = true;
+                self.search_error = None;
+            }
+            Action::EndSearch => {
+                self.search_active = false;
+                self.mods_focus = ModsFocus::Table;
+                if !self.search_query.is_empty() {
+                    let matches = self.filtered_mods().len();
+                    if matches == 0 {
+                        self.set_status(
+                            StatusLevel::Warning,
+                            format!(
+                                "No packages match '{}' -- press Esc to clear filter",
+                                self.search_query
+                            ),
+                        );
+                    } else {
+                        self.set_status(
+                            StatusLevel::Info,
+                            format!(
+                                "Filter applied: {} of {} packages shown",
+                                matches,
+                                self.mods.len()
+                            ),
+                        );
+                    }
+                }
+            }
+            Action::SearchChar(c) => {
+                if self.search_query.len() < 64 {
+                    self.search_query.push(c);
+                    self.search_error = None;
+                    self.cursor_index = 0;
+                } else {
+                    self.search_error =
+                        Some("Maximum search length (64 chars) reached".to_string());
+                    self.set_status(
+                        StatusLevel::Error,
+                        "Search query cannot exceed 64 characters",
+                    );
+                }
+            }
+            Action::SearchBackspace => {
+                self.search_query.pop();
+                self.search_error = None;
+                self.cursor_index = 0;
+            }
+            Action::ClearSearchAndFilters => {
+                self.search_query.clear();
+                self.search_active = false;
+                self.search_error = None;
+                self.category_filter = None;
+                self.cursor_index = 0;
+                self.set_status(
+                    StatusLevel::Info,
+                    "Cleared search query and category filters",
+                );
+            }
+            Action::FilterCategory(cat) => {
+                self.category_filter = cat;
+                self.cursor_index = 0;
+            }
+            Action::CycleCategory => {
+                let next = match self.category_filter.as_deref() {
+                    None => Some("Fixes".to_string()),
+                    Some("Fixes") => Some("UI".to_string()),
+                    Some("UI") => Some("Gameplay".to_string()),
+                    Some("Gameplay") => Some("Visuals".to_string()),
+                    _ => None,
+                };
+                let label = next.as_deref().unwrap_or("All").to_string();
+                self.category_filter = next;
+                self.cursor_index = 0;
+                self.set_status(
+                    StatusLevel::Info,
+                    format!(
+                        "Category filter: {} ({} packages)",
+                        label,
+                        self.filtered_mods().len()
+                    ),
+                );
+            }
+            Action::CycleCategoryReverse => {
+                let prev = match self.category_filter.as_deref() {
+                    None => Some("Visuals".to_string()),
+                    Some("Visuals") => Some("Gameplay".to_string()),
+                    Some("Gameplay") => Some("UI".to_string()),
+                    Some("UI") => Some("Fixes".to_string()),
+                    _ => None,
+                };
+                let label = prev.as_deref().unwrap_or("All").to_string();
+                self.category_filter = prev;
+                self.cursor_index = 0;
+                self.set_status(
+                    StatusLevel::Info,
+                    format!(
+                        "Category filter: {} ({} packages)",
+                        label,
+                        self.filtered_mods().len()
+                    ),
+                );
+            }
+            Action::ResolveConflictChoice { index, winner_id } => {
+                if index < self.conflicts.len() {
+                    let path = self.conflicts[index].file_path.clone();
+                    let is_a = self.conflicts[index].option_a.mod_id == winner_id;
+                    let winner_name = if is_a {
+                        self.conflicts_focus = ConflictsFocus::OptionA;
+                        self.conflicts[index].option_a.mod_name.clone()
+                    } else {
+                        self.conflicts_focus = ConflictsFocus::OptionB;
+                        self.conflicts[index].option_b.mod_name.clone()
+                    };
+                    self.conflicts[index].winner_id = Some(winner_id);
+                    self.set_status(
+                        StatusLevel::Success,
+                        format!("Selected '{}' as winning layer for {}", winner_name, path),
+                    );
+                }
+            }
+            Action::ToggleConflictWinner => {
+                if let Some(card) = self.conflicts.get(self.active_conflict_cursor) {
+                    let next_winner =
+                        if card.winner_id.as_deref() == Some(card.option_a.mod_id.as_str()) {
+                            card.option_b.mod_id.clone()
+                        } else {
+                            card.option_a.mod_id.clone()
+                        };
+                    let idx = self.active_conflict_cursor;
+                    self.handle_action(Action::ResolveConflictChoice {
+                        index: idx,
+                        winner_id: next_winner,
+                    });
+                }
+            }
+            Action::AutoResolveConflicts => {
+                for card in &mut self.conflicts {
+                    card.winner_id = Some(card.option_b.mod_id.clone());
+                }
+                self.set_status(
+                    StatusLevel::Success,
+                    "All conflicts auto-resolved via 3-Tier Priority Waterfall",
+                );
+            }
+            Action::SelectProfile(idx) => {
+                if idx < self.profiles.len() {
+                    for (i, p) in self.profiles.iter_mut().enumerate() {
+                        p.is_active = i == idx;
+                    }
+                    let prof = &self.profiles[idx];
+                    let prof_name = prof.name.clone();
+                    let game_short = prof.game_short.clone();
+                    self.game_title = format!("{} [{}]", game_short, prof_name);
+                    self.proton_version = prof.proton_version.clone();
+                    self.diagnostics = vec![prof.diagnostic.clone()];
+                    self.set_status(
+                        StatusLevel::Success,
+                        format!(
+                            "Switched workspace profile to {} :: '{}' ({})",
+                            game_short, prof_name, self.proton_version
+                        ),
+                    );
+                }
+            }
+            Action::StartProfileInput => {
+                self.profiles_focus = ProfilesFocus::NewProfileInput;
+                self.profile_input_active = true;
+                self.profile_input_error = None;
+            }
+            Action::StartOverviewInput => {
+                self.active_tab = Tab::Overview;
+                self.overview_focus = OverviewFocus::CommandInput;
+                self.overview_input_active = true;
+                self.overview_input_error = None;
+            }
+            Action::CycleTargetGame => {
+                if !self.game_catalog.is_empty() {
+                    self.new_profile_game_idx =
+                        (self.new_profile_game_idx + 1) % self.game_catalog.len();
+                    let g = &self.game_catalog[self.new_profile_game_idx];
+                    self.set_status(
+                        StatusLevel::Info,
+                        format!(
+                            "Selected target game for new profiles: {} (AppID {})",
+                            g.short_name, g.steam_app_id
+                        ),
+                    );
+                }
+            }
+            Action::CycleTargetGameReverse => {
+                if !self.game_catalog.is_empty() {
+                    let len = self.game_catalog.len();
+                    self.new_profile_game_idx = (self.new_profile_game_idx + len - 1) % len;
+                    let g = &self.game_catalog[self.new_profile_game_idx];
+                    self.set_status(
+                        StatusLevel::Info,
+                        format!(
+                            "Selected target game for new profiles: {} (AppID {})",
+                            g.short_name, g.steam_app_id
+                        ),
+                    );
+                }
+            }
+            Action::FixDiagnostic => {
+                let idx = self
+                    .profile_cursor
+                    .min(self.profiles.len().saturating_sub(1));
+                if let Some(prof) = self.profiles.get_mut(idx) {
+                    if !prof.diagnostic.resolved {
+                        prof.diagnostic.resolved = true;
+                        prof.diagnostic.level = "OK".to_string();
+                        prof.diagnostic.action_text = "[VERIFIED]".to_string();
+                        let title = prof.diagnostic.title.clone();
+                        let game_short = prof.game_short.clone();
+                        self.diagnostics = vec![prof.diagnostic.clone()];
+                        self.set_status(
+                            StatusLevel::Success,
+                            format!("Resolved '{}' for {}", title, game_short),
+                        );
+                    } else {
+                        self.set_status(
+                            StatusLevel::Info,
+                            "All environment diagnostics for this profile are already healthy",
+                        );
+                    }
+                }
+            }
+            Action::StartDownload(name) => {
+                self.downloads.insert(
+                    0,
+                    DownloadItem {
+                        name: name.clone(),
+                        progress: 0.0,
+                        speed: "Connecting...".to_string(),
+                        status: "SWARMING".to_string(),
+                        peers_info: "Bootstrapping DHT + Web Seeds".to_string(),
+                        paused: false,
+                    },
+                );
+                self.download_cursor = 0;
+                self.set_status(
+                    StatusLevel::Success,
+                    format!("Enqueued transfer: '{}'", name),
+                );
+            }
+            Action::StartDownloadInput => {
+                self.download_focus = DownloadsFocus::Input;
+                self.download_input_active = true;
+                self.download_input_error = None;
+            }
+            Action::TogglePauseDownload => {
+                if let Some(item) = self.downloads.get_mut(self.download_cursor) {
+                    item.paused = !item.paused;
+                    if item.paused {
+                        item.status = "PAUSED".to_string();
+                        item.speed = "0.0 MB/s".to_string();
+                        let name = item.name.clone();
+                        self.set_status(
+                            StatusLevel::Warning,
+                            format!("Paused transfer '{}'", name),
+                        );
+                    } else {
+                        item.status = "SWARMING".to_string();
+                        item.speed = "38.4 MB/s".to_string();
+                        let name = item.name.clone();
+                        self.set_status(
+                            StatusLevel::Info,
+                            format!("Resumed P2P swarm transfer '{}'", name),
+                        );
+                    }
+                }
+            }
+            Action::InstallCuratedPackage => {
+                if let Some(pkg) = self.curated_packages.get_mut(self.curated_cursor) {
+                    if !pkg.is_installed {
+                        pkg.is_installed = true;
+                        let title = pkg.title.clone();
+                        let desc = pkg.desc.clone();
+                        let slug = title.to_lowercase().replace(' ', "_");
+                        self.downloads.insert(
+                            0,
+                            DownloadItem {
+                                name: title.clone(),
+                                progress: 15.0,
+                                speed: "52.1 MB/s".to_string(),
+                                status: "SWARMING".to_string(),
+                                peers_info: "24 DHT Peers + 4 Web Seeds".to_string(),
+                                paused: false,
+                            },
+                        );
+                        self.mods.push(ModItem {
+                            id: slug,
+                            name: title.clone(),
+                            active: true,
+                            category: "Fixes".to_string(),
+                            priority: Priority::High,
+                            version: "1.0.0".to_string(),
+                            author: "Perihelion Curated".to_string(),
+                            description: desc,
+                            affected_files: vec!["peri.toml".to_string()],
+                            has_conflict: false,
+                        });
+                        self.set_status(
+                            StatusLevel::Success,
+                            format!("Enqueued & registered curated bundle '{}'", title),
+                        );
+                    } else {
+                        let title = pkg.title.clone();
+                        self.set_status(
+                            StatusLevel::Warning,
+                            format!("Bundle '{}' is already installed in workspace", title),
+                        );
+                    }
+                }
+            }
+            Action::InputChar(c) => {
+                if self.overview_input_active {
+                    self.overview_input.push(c);
+                    self.overview_input_error = None;
+                } else if self.search_active {
+                    self.handle_action(Action::SearchChar(c));
+                } else if self.download_input_active {
+                    self.download_input.push(c);
+                    self.download_input_error = None;
+                } else if self.profile_input_active {
+                    self.profile_input.push(c);
+                    self.profile_input_error = None;
+                }
+            }
+            Action::InputBackspace => {
+                if self.overview_input_active {
+                    self.overview_input.pop();
+                    self.overview_input_error = None;
+                } else if self.search_active {
+                    self.handle_action(Action::SearchBackspace);
+                } else if self.download_input_active {
+                    self.download_input.pop();
+                    self.download_input_error = None;
+                } else if self.profile_input_active {
+                    self.profile_input.pop();
+                    self.profile_input_error = None;
+                }
+            }
+            Action::InputDeleteWord => {
+                if self.overview_input_active {
+                    Self::delete_last_word(&mut self.overview_input);
+                    self.overview_input_error = None;
+                } else if self.search_active {
+                    Self::delete_last_word(&mut self.search_query);
+                    self.search_error = None;
+                    self.clamp_mod_cursor();
+                } else if self.download_input_active {
+                    Self::delete_last_word(&mut self.download_input);
+                    self.download_input_error = None;
+                } else if self.profile_input_active {
+                    Self::delete_last_word(&mut self.profile_input);
+                    self.profile_input_error = None;
+                }
+            }
+            Action::InputClear => {
+                if self.overview_input_active {
+                    self.overview_input.clear();
+                    self.overview_input_error = None;
+                } else if self.search_active {
+                    self.search_query.clear();
+                    self.search_error = None;
+                    self.cursor_index = 0;
+                } else if self.download_input_active {
+                    self.download_input.clear();
+                    self.download_input_error = None;
+                } else if self.profile_input_active {
+                    self.profile_input.clear();
+                    self.profile_input_error = None;
+                }
+            }
+            Action::SubmitInput => {
+                if self.overview_input_active {
+                    let trimmed = self.overview_input.trim().to_string();
+                    self.overview_input_active = false;
+                    let lower = trimmed.to_ascii_lowercase();
+                    if lower.is_empty() {
+                        return;
+                    }
+                    if lower == "launch" || lower == "play" || lower == "run" {
+                        self.overview_input.clear();
+                        self.handle_action(Action::LaunchGame);
+                    } else if lower.starts_with("clone ") || lower.starts_with("download ") {
+                        let target = if lower.starts_with("clone ") {
+                            trimmed[6..].trim()
+                        } else {
+                            trimmed[9..].trim()
+                        };
+                        let slug = target.to_string();
+                        self.overview_input.clear();
+                        self.active_tab = Tab::Downloads;
+                        self.handle_action(Action::StartDownload(slug));
+                    } else if lower.starts_with("switch ") || lower.starts_with("profile ") {
+                        let target = if lower.starts_with("switch ") {
+                            trimmed[7..].trim()
+                        } else {
+                            trimmed[8..].trim()
+                        };
+                        self.overview_input.clear();
+                        if let Some(idx) = self.profiles.iter().position(|p| {
+                            p.name
+                                .to_ascii_lowercase()
+                                .contains(&target.to_ascii_lowercase())
+                                || p.game_short
+                                    .to_ascii_lowercase()
+                                    .contains(&target.to_ascii_lowercase())
+                        }) {
+                            self.overview_profile_cursor = idx;
+                            self.handle_action(Action::SelectProfile(idx));
+                        } else {
+                            self.set_status(
+                                StatusLevel::Warning,
+                                format!("No profile matches '{}'", target),
+                            );
+                        }
+                    } else if lower.starts_with("search ") || lower.starts_with("find ") {
+                        let q = if lower.starts_with("search ") {
+                            trimmed[7..].trim()
+                        } else {
+                            trimmed[5..].trim()
+                        };
+                        self.search_query = q.to_string();
+                        self.overview_input.clear();
+                        self.active_tab = Tab::Mods;
+                        self.mods_focus = ModsFocus::Table;
+                        self.cursor_index = 0;
+                        self.clamp_mod_cursor();
+                    } else if lower == "mods" {
+                        self.overview_input.clear();
+                        self.active_tab = Tab::Mods;
+                    } else if lower == "conflicts" || lower == "resolve" {
+                        self.overview_input.clear();
+                        self.active_tab = Tab::Conflicts;
+                    } else if lower == "downloads" {
+                        self.overview_input.clear();
+                        self.active_tab = Tab::Downloads;
+                    } else if lower == "profiles" {
+                        self.overview_input.clear();
+                        self.active_tab = Tab::Profiles;
+                    } else if lower == "help" {
+                        self.overview_input.clear();
+                        self.show_help = true;
+                    } else if lower.starts_with("magnet:")
+                        || lower.starts_with("https://")
+                        || lower.ends_with(".peca")
+                    {
+                        self.overview_input.clear();
+                        self.active_tab = Tab::Downloads;
+                        self.handle_action(Action::StartDownload(trimmed));
+                    } else {
+                        self.overview_input.clear();
+                        if let Some(idx) = self.profiles.iter().position(|p| {
+                            p.name.to_ascii_lowercase().contains(&lower)
+                                || p.game_short.to_ascii_lowercase().contains(&lower)
+                        }) {
+                            self.overview_profile_cursor = idx;
+                            self.handle_action(Action::SelectProfile(idx));
+                        } else {
+                            self.search_query = trimmed;
+                            self.active_tab = Tab::Mods;
+                            self.cursor_index = 0;
+                            self.clamp_mod_cursor();
+                        }
+                    }
+                } else if self.search_active {
+                    self.handle_action(Action::EndSearch);
+                } else if self.download_input_active {
+                    let trimmed = self.download_input.trim().to_string();
+                    if trimmed.is_empty() {
+                        let msg = "Input empty: provide a .peca URL, magnet:? URI, or package slug"
+                            .to_string();
+                        self.download_input_error = Some(msg.clone());
+                        self.set_status(StatusLevel::Error, msg);
+                        return;
+                    }
+                    match self.validate_download_input() {
+                        InputValidation::Valid(_) => {
+                            self.download_input.clear();
+                            self.download_input_error = None;
+                            self.download_input_active = false;
+                            self.download_focus = DownloadsFocus::Queue;
+                            self.handle_action(Action::StartDownload(trimmed));
+                        }
+                        InputValidation::Warning(msg) | InputValidation::Invalid(msg) => {
+                            self.download_input_error = Some(msg.clone());
+                            self.set_status(
+                                StatusLevel::Error,
+                                format!("Cannot start download: {}", msg),
+                            );
+                        }
+                        InputValidation::Idle => {}
+                    }
+                } else if self.profile_input_active {
+                    let trimmed = self.profile_input.trim().to_string();
+                    if trimmed.is_empty() {
+                        let msg = "Profile name cannot be empty".to_string();
+                        self.profile_input_error = Some(msg.clone());
+                        self.set_status(StatusLevel::Error, msg);
+                        return;
+                    }
+                    match self.validate_profile_input() {
+                        InputValidation::Valid(_) => {
+                            for p in &mut self.profiles {
+                                p.is_active = false;
+                            }
+                            let target_game = &self.game_catalog[self.new_profile_game_idx];
+                            let slug = trimmed.to_lowercase().replace(' ', "_");
+                            let new_prof = ProfileItem {
+                                name: trimmed.clone(),
+                                game_id: target_game.game_id.clone(),
+                                game_short: target_game.short_name.clone(),
+                                game_full_name: target_game.full_name.clone(),
+                                steam_app_id: target_game.steam_app_id,
+                                executable: target_game.executable.clone(),
+                                install_dir: target_game.install_dir.clone(),
+                                upper_dir: format!(
+                                    "~/.local/share/perihelion/profiles/{}_{}/upper",
+                                    target_game.game_id, slug
+                                ),
+                                mappings: target_game.mappings.clone(),
+                                desc: format!(
+                                    "Isolated {} OverlayFS profile with read-only base game.",
+                                    target_game.short_name
+                                ),
+                                mod_count: self.mods.iter().filter(|m| m.active).count(),
+                                proton_version: target_game.default_proton.clone(),
+                                is_active: true,
+                                diagnostic: target_game.default_diagnostic.clone(),
+                            };
+                            let game_short = new_prof.game_short.clone();
+                            self.proton_version = new_prof.proton_version.clone();
+                            self.diagnostics = vec![new_prof.diagnostic.clone()];
+                            self.profiles.push(new_prof);
+                            self.profile_cursor = self.profiles.len() - 1;
+                            self.game_title = format!("{} [{}]", game_short, trimmed);
+                            self.profile_input.clear();
+                            self.profile_input_error = None;
+                            self.profile_input_active = false;
+                            self.profiles_focus = ProfilesFocus::ProfileList;
+                            self.set_status(
+                                StatusLevel::Success,
+                                format!(
+                                    "Created and activated {} profile '{}'",
+                                    game_short, trimmed
+                                ),
+                            );
+                        }
+                        InputValidation::Warning(msg) | InputValidation::Invalid(msg) => {
+                            self.profile_input_error = Some(msg.clone());
+                            self.set_status(
+                                StatusLevel::Error,
+                                format!("Invalid profile name: {}", msg),
+                            );
+                        }
+                        InputValidation::Idle => {}
+                    }
+                }
+            }
+            Action::CancelInput => {
+                if self.overview_input_active {
+                    self.overview_input_active = false;
+                    self.overview_input_error = None;
+                }
+                if self.search_active {
+                    self.search_active = false;
+                    self.search_error = None;
+                    self.mods_focus = ModsFocus::Table;
+                }
+                if self.download_input_active {
+                    self.download_input_active = false;
+                    self.download_input_error = None;
+                }
+                if self.profile_input_active {
+                    self.profile_input_active = false;
+                    self.profile_input_error = None;
+                }
+            }
+            Action::LaunchGame => {
+                self.set_status(
+                    StatusLevel::Success,
+                    format!(
+                        ">> Booting {} inside isolated OverlayFS namespace ({})...",
+                        self.game_title, self.proton_version
+                    ),
+                );
+            }
+            Action::ToggleHelp => {
+                self.show_help = !self.show_help;
+            }
+            Action::CloseModal => {
+                self.show_help = false;
+                self.overview_input_active = false;
+                self.search_active = false;
+                self.download_input_active = false;
+                self.profile_input_active = false;
+            }
+            Action::Tick => {
+                let mut completed_name = None;
+                for item in &mut self.downloads {
+                    if !item.paused && item.progress < 100.0 {
+                        item.progress = (item.progress + 0.6).min(100.0);
+                        if item.progress >= 100.0 {
+                            item.status = "VERIFIED".to_string();
+                            item.speed = "Done (SHA-256 OK)".to_string();
+                            completed_name = Some(item.name.clone());
+                        } else {
+                            item.status = "SWARMING".to_string();
+                        }
+                    }
+                }
+                if let Some(done) = completed_name {
+                    self.set_status(
+                        StatusLevel::Success,
+                        format!("Transfer complete & verified: '{}'", done),
+                    );
+                }
+            }
+            Action::Render => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_app_initialization() {
+        let app = App::new();
+        assert_eq!(app.active_tab, Tab::Overview);
+        assert_eq!(app.overview_focus, OverviewFocus::CommandInput);
+        assert_eq!(app.mods.len(), 5);
+        assert_eq!(app.conflicts.len(), 1);
+        assert_eq!(app.profiles.len(), 3);
+        assert!(app.show_inspector);
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_tab_navigation() {
+        let mut app = App::new();
+        assert_eq!(app.active_tab, Tab::Overview);
+
+        app.handle_action(Action::NextTab);
+        assert_eq!(app.active_tab, Tab::Mods);
+
+        app.handle_action(Action::NextTab);
+        assert_eq!(app.active_tab, Tab::Conflicts);
+
+        app.handle_action(Action::NextTab);
+        assert_eq!(app.active_tab, Tab::Downloads);
+
+        app.handle_action(Action::NextTab);
+        assert_eq!(app.active_tab, Tab::Profiles);
+
+        app.handle_action(Action::NextTab);
+        assert_eq!(app.active_tab, Tab::Overview);
+
+        app.handle_action(Action::PrevTab);
+        assert_eq!(app.active_tab, Tab::Profiles);
+
+        app.handle_action(Action::SetTab(Tab::Mods));
+        assert_eq!(app.active_tab, Tab::Mods);
+    }
+
+    #[test]
+    fn test_focus_area_cycling_with_tab() {
+        let mut app = App::new();
+        app.handle_action(Action::SetTab(Tab::Mods));
+        assert_eq!(app.mods_focus, ModsFocus::Table);
+
+        // Tab cycles through selectable areas within the current page instead of switching pages
+        app.handle_action(Action::FocusNext);
+        assert_eq!(app.active_tab, Tab::Mods);
+        assert_eq!(app.mods_focus, ModsFocus::Inspector);
+
+        app.handle_action(Action::FocusNext);
+        assert_eq!(app.mods_focus, ModsFocus::Search);
+        assert!(app.search_active);
+
+        app.handle_action(Action::FocusNext);
+        assert_eq!(app.mods_focus, ModsFocus::Categories);
+        assert!(!app.search_active);
+
+        app.handle_action(Action::FocusNext);
+        assert_eq!(app.mods_focus, ModsFocus::Table);
+    }
+
+    #[test]
+    fn test_overview_command_palette_and_fast_switching() {
+        let mut app = App::new();
+        assert_eq!(app.active_tab, Tab::Overview);
+
+        // Tab switches focus between CommandInput and RecentProfiles
+        app.handle_action(Action::FocusNext);
+        assert_eq!(app.overview_focus, OverviewFocus::RecentProfiles);
+
+        // Selecting a profile from Overview switches active game
+        app.overview_profile_cursor = 2; // Cyberpunk 2077
+        app.handle_action(Action::ActivateFocused);
+        assert_eq!(app.game_title, "Cyberpunk 2077 [Cyberware & Vehicles]");
+
+        // Return focus to CommandInput and type a command
+        app.handle_action(Action::FocusNext);
+        assert_eq!(app.overview_focus, OverviewFocus::CommandInput);
+
+        app.handle_action(Action::StartOverviewInput);
+        assert!(app.overview_input_active);
+
+        for c in "search skyui".chars() {
+            app.handle_action(Action::InputChar(c));
+        }
+        assert!(matches!(
+            app.validate_overview_input(),
+            InputValidation::Valid(_)
+        ));
+
+        app.handle_action(Action::SubmitInput);
+        assert!(!app.overview_input_active);
+        assert_eq!(app.active_tab, Tab::Mods);
+        assert_eq!(app.search_query, "skyui");
+    }
+
+    #[test]
+    fn test_smart_autocomplete_across_fields() {
+        let mut app = App::new();
+
+        // 1. Overview root command completion: "cl" -> "clone "
+        app.handle_action(Action::StartOverviewInput);
+        app.overview_input = "cl".to_string();
+        assert!(app.accept_autocomplete());
+        assert_eq!(app.overview_input, "clone ");
+
+        // Sub-command argument completion: "clone sky" -> "clone skyui"
+        app.overview_input = "clone sky".to_string();
+        assert!(app.accept_autocomplete());
+        assert_eq!(app.overview_input, "clone skyui");
+
+        // 2. Mod search completion: "ord" -> "Ordinator - Perks of Skyrim"
+        app.handle_action(Action::SetTab(Tab::Mods));
+        app.handle_action(Action::StartSearch);
+        app.search_query = "ord".to_string();
+        assert!(app.accept_autocomplete());
+        assert_eq!(app.search_query, "Ordinator - Perks of Skyrim");
+
+        // 3. Downloads completion: "real" -> "realistic_water_two.peca"
+        app.handle_action(Action::SetTab(Tab::Downloads));
+        app.handle_action(Action::StartDownloadInput);
+        app.download_input = "real".to_string();
+        assert!(app.accept_autocomplete());
+        assert_eq!(app.download_input, "realistic_water_two.peca");
+
+        // 4. Profiles completion: Cyberpunk 2077 -> "Edg" -> "Edgerunners Mode"
+        app.handle_action(Action::SetTab(Tab::Profiles));
+        app.new_profile_game_idx = 1; // Cyberpunk 2077
+        app.handle_action(Action::StartProfileInput);
+        app.profile_input = "Edg".to_string();
+        assert!(app.accept_autocomplete());
+        assert_eq!(app.profile_input, "Edgerunners Mode");
+    }
+
+    #[test]
+    fn test_mod_toggle_and_priority() {
+        let mut app = App::new();
+        assert!(app.mods[0].active);
+        let initial_prio = app.mods[0].priority;
+
+        app.cursor_index = 0;
+        app.handle_action(Action::ToggleMod);
+        assert!(!app.mods[0].active);
+
+        app.handle_action(Action::CyclePriority);
+        assert_ne!(app.mods[0].priority, initial_prio);
+    }
+
+    #[test]
+    fn test_search_and_filter() {
+        let mut app = App::new();
+        assert_eq!(app.filtered_mods().len(), 5);
+
+        app.handle_action(Action::StartSearch);
+        assert!(app.search_active);
+
+        // "Sky" matches Skyrim SE patch, SkyUI, Ordinator (Perks of Skyrim), and Skyland (4 mods)
+        app.handle_action(Action::SearchChar('S'));
+        app.handle_action(Action::SearchChar('k'));
+        app.handle_action(Action::SearchChar('y'));
+        assert_eq!(app.filtered_mods().len(), 4);
+
+        // "SkyUI" matches exactly 1 mod
+        app.handle_action(Action::SearchChar('U'));
+        app.handle_action(Action::SearchChar('I'));
+        assert_eq!(app.filtered_mods().len(), 1);
+
+        app.handle_action(Action::SearchBackspace);
+        app.handle_action(Action::SearchBackspace);
+        assert_eq!(app.filtered_mods().len(), 4);
+
+        app.handle_action(Action::EndSearch);
+        assert!(!app.search_active);
+    }
+
+    #[test]
+    fn test_conflict_resolution() {
+        let mut app = App::new();
+        assert_eq!(app.conflicts[0].winner_id.as_deref(), Some("skyland"));
+
+        app.handle_action(Action::ResolveConflictChoice {
+            index: 0,
+            winner_id: "better_iron_weapons".to_string(),
+        });
+        assert_eq!(
+            app.conflicts[0].winner_id.as_deref(),
+            Some("better_iron_weapons")
+        );
+
+        app.handle_action(Action::AutoResolveConflicts);
+        assert_eq!(app.conflicts[0].winner_id.as_deref(), Some("skyland"));
+    }
+
+    #[test]
+    fn test_profile_switching() {
+        let mut app = App::new();
+        assert!(app.profiles[0].is_active);
+        assert!(!app.profiles[1].is_active);
+
+        app.handle_action(Action::SelectProfile(1));
+        assert!(!app.profiles[0].is_active);
+        assert!(app.profiles[1].is_active);
+        assert_eq!(app.game_title, "Skyrim SE [Vanilla+ Light Fixes]");
+
+        // Switch to a different game profile (Cyberpunk 2077)
+        app.handle_action(Action::SelectProfile(2));
+        assert_eq!(app.game_title, "Cyberpunk 2077 [Cyberware & Vehicles]");
+    }
+
+    #[test]
+    fn test_inspector_toggle() {
+        let mut app = App::new();
+        assert!(app.show_inspector);
+
+        app.handle_action(Action::ToggleInspector);
+        assert!(!app.show_inspector);
+
+        app.handle_action(Action::ToggleInspector);
+        assert!(app.show_inspector);
+    }
+
+    #[test]
+    fn test_download_input_validation_and_submission() {
+        let mut app = App::new();
+        app.handle_action(Action::SetTab(Tab::Downloads));
+        app.handle_action(Action::StartDownloadInput);
+        assert!(app.download_input_active);
+
+        // Submitting empty input triggers visual validation error
+        app.handle_action(Action::SubmitInput);
+        assert!(app.download_input_error.is_some());
+        assert_eq!(app.status_level, StatusLevel::Error);
+
+        // Typing malformed URI triggers invalid state
+        for c in "ftp://bad".chars() {
+            app.handle_action(Action::InputChar(c));
+        }
+        assert!(matches!(
+            app.validate_download_input(),
+            InputValidation::Invalid(_)
+        ));
+        app.handle_action(Action::SubmitInput);
+        assert!(app.download_input_error.is_some());
+
+        // Clear and type valid .peca URL
+        app.handle_action(Action::InputClear);
+        for c in "https://mods.perihelion.io/smim_4k.peca".chars() {
+            app.handle_action(Action::InputChar(c));
+        }
+        assert!(matches!(
+            app.validate_download_input(),
+            InputValidation::Valid(_)
+        ));
+
+        let initial_len = app.downloads.len();
+        app.handle_action(Action::SubmitInput);
+        assert!(!app.download_input_active);
+        assert!(app.download_input_error.is_none());
+        assert_eq!(app.downloads.len(), initial_len + 1);
+        assert_eq!(app.status_level, StatusLevel::Success);
+    }
+
+    #[test]
+    fn test_profile_creation_validation_and_multi_game_target() {
+        let mut app = App::new();
+        app.handle_action(Action::SetTab(Tab::Profiles));
+
+        // Cycle target game from Skyrim SE (0) -> Cyberpunk 2077 (1) -> Starfield (2)
+        app.handle_action(Action::CycleTargetGame);
+        app.handle_action(Action::CycleTargetGame);
+        assert_eq!(
+            app.game_catalog[app.new_profile_game_idx].short_name,
+            "Starfield"
+        );
+
+        app.handle_action(Action::StartProfileInput);
+        assert!(app.profile_input_active);
+
+        // Duplicate name fails validation
+        for c in "Requiem Overhaul".chars() {
+            app.handle_action(Action::InputChar(c));
+        }
+        assert!(matches!(
+            app.validate_profile_input(),
+            InputValidation::Invalid(_)
+        ));
+        app.handle_action(Action::SubmitInput);
+        assert!(app.profile_input_error.is_some());
+
+        // Valid new profile name creates a Starfield profile
+        app.handle_action(Action::InputClear);
+        for c in "NASAPunk Explorers".chars() {
+            app.handle_action(Action::InputChar(c));
+        }
+        app.handle_action(Action::SubmitInput);
+        assert!(!app.profile_input_active);
+        assert_eq!(app.profiles.len(), 4);
+        assert_eq!(app.game_title, "Starfield [NASAPunk Explorers]");
+        assert_eq!(app.profiles[3].steam_app_id, 1716740);
+    }
+}
