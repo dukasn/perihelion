@@ -11,8 +11,11 @@ mod cli;
 mod config;
 mod error;
 
-use cli::{CheckArgs, Cli, Commands, GetArgs, InitArgs, PackageArgs, RunArgs, SyncArgs};
-use config::load_global_config;
+use cli::{
+    CheckArgs, Cli, Commands, ConfigAction, ConfigArgs, GetArgs, InitArgs, PackageArgs, RunArgs,
+    SyncArgs,
+};
+use config::{load_global_config, resolve_config_dir, resolve_home_dir};
 use error::CliError;
 use peri_archive::{
     compute_file_sha256, create_peca, extract_peca, generate_package_file_index,
@@ -57,6 +60,7 @@ async fn main() -> Result<()> {
         Commands::Package(args) => handle_package(args).await?,
         Commands::Check(args) => handle_check(args).await?,
         Commands::Run(args) => handle_run(args).await?,
+        Commands::Config(args) => handle_config(args).await?,
     }
 
     Ok(())
@@ -118,8 +122,60 @@ fn load_or_cache_vfi(
     Ok(index)
 }
 
+fn validate_workspace_path(path: &Path) -> Result<PathBuf, CliError> {
+    if let Some(home) = resolve_home_dir() {
+        Ok(validate_safe_path(path, &home)?)
+    } else {
+        Ok(path.to_path_buf())
+    }
+}
+
+async fn handle_config(args: ConfigArgs) -> Result<(), CliError> {
+    let action = args.action.unwrap_or(ConfigAction::Show);
+    let config_dir = resolve_config_dir();
+    let config_file = config_dir.join(peri_core::CONFIG_FILENAME);
+
+    match action {
+        ConfigAction::Path => {
+            println!("{}", config_file.display());
+        }
+        ConfigAction::Show => {
+            let config = load_global_config();
+            let toml = config.to_toml_str()?;
+            println!(
+                "# Global configuration from: {}\n{}",
+                config_file.display(),
+                toml
+            );
+        }
+        ConfigAction::Init => {
+            if config_file.exists() {
+                println!(
+                    "ℹ️  Global configuration file already exists at {}",
+                    config_file.display()
+                );
+            } else {
+                fs::create_dir_all(&config_dir).map_err(|e| CliError::Workspace(e.to_string()))?;
+                let config = if let Some(home) = resolve_home_dir() {
+                    peri_core::GlobalConfig::default_for_home(&home)
+                } else {
+                    peri_core::GlobalConfig::default()
+                };
+                let toml = config.to_toml_str()?;
+                fs::write(&config_file, toml).map_err(|e| CliError::Workspace(e.to_string()))?;
+                println!(
+                    "✨ Created default configuration file at {}",
+                    config_file.display()
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn handle_init(args: InitArgs) -> Result<(), CliError> {
-    let workspace_path = args.path;
+    let workspace_path = validate_workspace_path(&args.path)?;
     fs::create_dir_all(&workspace_path).map_err(|e| CliError::Workspace(e.to_string()))?;
 
     let manifest_path = workspace_path.join(MANIFEST_FILENAME);
@@ -193,7 +249,7 @@ async fn handle_init(args: InitArgs) -> Result<(), CliError> {
 }
 
 async fn handle_package(args: PackageArgs) -> Result<(), CliError> {
-    let source_dir = args.source;
+    let source_dir = validate_workspace_path(&args.source)?;
     let manifest_path = source_dir.join(MANIFEST_FILENAME);
 
     if !manifest_path.exists() {
@@ -216,6 +272,7 @@ async fn handle_package(args: PackageArgs) -> Result<(), CliError> {
         );
         source_dir.join(filename)
     });
+    let output_path = validate_workspace_path(&output_path)?;
 
     info!(source = %source_dir.display(), target = %output_path.display(), "Packaging .peca archive");
 
@@ -299,7 +356,7 @@ async fn handle_get(args: GetArgs) -> Result<(), CliError> {
 }
 
 async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
-    let workspace = args.workspace;
+    let workspace = validate_workspace_path(&args.workspace)?;
     let cache_dir = workspace.join(CACHE_MODS_DIR);
     let extracted_dir = workspace.join(EXTRACTED_DIR);
 
@@ -376,7 +433,7 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
 }
 
 async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
-    let workspace = args.workspace;
+    let workspace = validate_workspace_path(&args.workspace)?;
     let root_manifest_path = workspace.join(MANIFEST_FILENAME);
     let mut overrides: HashMap<String, OverrideRule> = HashMap::new();
     let mut game_profile = GameProfile::generic("generic");
@@ -460,7 +517,7 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
 }
 
 async fn handle_run(args: RunArgs) -> Result<(), CliError> {
-    let workspace = args.workspace;
+    let workspace = validate_workspace_path(&args.workspace)?;
     let root_manifest_path = workspace.join(MANIFEST_FILENAME);
 
     if !root_manifest_path.exists() {

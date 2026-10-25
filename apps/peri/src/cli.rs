@@ -38,6 +38,11 @@ pub enum Commands {
 
     #[command(about = "Spawns the namespace, constructs the VFS layer, and executes the game")]
     Run(RunArgs),
+
+    #[command(
+        about = "Inspects or initializes global configuration (~/.config/perihelion/config.toml)"
+    )]
+    Config(ConfigArgs),
 }
 
 #[derive(Debug, Args)]
@@ -123,4 +128,20 @@ pub struct RunArgs {
 
     #[arg(last = true, help = "Arguments passed through to the game executable")]
     pub args: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct ConfigArgs {
+    #[command(subcommand)]
+    pub action: Option<ConfigAction>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigAction {
+    #[command(about = "Displays the path to the global config.toml")]
+    Path,
+    #[command(about = "Displays the active global configuration")]
+    Show,
+    #[command(about = "Initializes default ~/.config/perihelion/config.toml")]
+    Init,
 }
