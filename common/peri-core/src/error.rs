@@ -144,6 +144,13 @@ pub enum ResolveError {
         mod_b: String,
         priority: String,
     },
+
+    #[error("Unsolvable version constraints:\n{0}")]
+    #[diagnostic(
+        code(peri::resolve::unsolvable_constraints),
+        help("Adjust version constraints in your peri.toml or add compatible package versions.")
+    )]
+    UnsolvableConstraints(String),
 }
 
 #[derive(Debug, Error, Diagnostic, Clone, PartialEq, Eq)]

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -22,8 +22,9 @@ use peri_archive::{
     load_package_vfi_cache, read_manifest_from_peca, save_package_vfi_cache,
 };
 use peri_core::{
-    validate_safe_path, DependencyGraph, GameProfile, Manifest, OverrideRule, PackageFileIndex,
-    PackageMetadata, ResolutionSource, TargetGame, VirtualFileIndex, MANIFEST_FILENAME,
+    solve_workspace, validate_safe_path, DependencyGraph, GameProfile, Lockfile, Manifest,
+    OverrideRule, PackageCatalog, PackageFileIndex, PackageMetadata, ResolutionSource, TargetGame,
+    VirtualFileIndex, LOCKFILE_FILENAME, MANIFEST_FILENAME,
 };
 use peri_vfs::VfsPlan;
 
@@ -123,10 +124,17 @@ fn load_or_cache_vfi(
 }
 
 fn validate_workspace_path(path: &Path) -> Result<PathBuf, CliError> {
-    if let Some(home) = resolve_home_dir() {
-        Ok(validate_safe_path(path, &home)?)
+    let abs_path = if path.is_absolute() {
+        path.to_path_buf()
     } else {
-        Ok(path.to_path_buf())
+        std::env::current_dir()
+            .map_err(|e| CliError::Workspace(e.to_string()))?
+            .join(path)
+    };
+    if let Some(home) = resolve_home_dir() {
+        Ok(validate_safe_path(&abs_path, &home)?)
+    } else {
+        Ok(abs_path)
     }
 }
 
@@ -370,19 +378,21 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
     fs::create_dir_all(&extracted_dir).map_err(|e| CliError::Workspace(e.to_string()))?;
 
     let root_manifest_path = workspace.join(MANIFEST_FILENAME);
+    let lockfile_path = workspace.join(LOCKFILE_FILENAME);
     let mut overrides: HashMap<String, OverrideRule> = HashMap::new();
     let mut game_profile = GameProfile::generic("generic");
+    let mut root_manifest_opt = None;
 
     if root_manifest_path.exists() {
         let content = fs::read_to_string(&root_manifest_path)
             .map_err(|e| CliError::Workspace(e.to_string()))?;
         let root_manifest = Manifest::from_toml_str(&content)?;
-        overrides = root_manifest.overrides.into_iter().collect();
+        overrides = root_manifest.overrides.clone().into_iter().collect();
         game_profile = resolve_game_profile(&workspace, &root_manifest.target.game_id);
+        root_manifest_opt = Some(root_manifest);
     }
 
-    let mut graph = DependencyGraph::new();
-    let mut vfi = VirtualFileIndex::new();
+    let mut catalog = PackageCatalog::new();
     let mut peca_files: Vec<(Manifest, PathBuf)> = Vec::new();
     let vfi_cache_dir = workspace.join(VFI_CACHE_DIR);
 
@@ -391,28 +401,89 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
         let path = entry.path();
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("peca") {
             let manifest = read_manifest_from_peca(&path)?;
-            let index = load_or_cache_vfi(&vfi_cache_dir, &path, &manifest)?;
-            vfi.add_package_index(&index, |p| {
-                game_profile
-                    .map_path(Path::new(p))
-                    .to_string_lossy()
-                    .into_owned()
-            });
-            graph.add_manifest(manifest.clone());
+            catalog.add_package(manifest.clone());
             peca_files.push((manifest, path));
         }
     }
 
-    // Apply the 3-Tier Resolution Waterfall
+    // Stage 1: Version Selection (PubGrub CDCL SAT Solver & peri.lock)
+    let selected_versions = if let Some(ref root_manifest) = root_manifest_opt {
+        if !root_manifest.dependencies.is_empty() {
+            let mut use_lock = false;
+            let mut resolved = BTreeMap::new();
+
+            if lockfile_path.exists() {
+                if let Ok(content) = fs::read_to_string(&lockfile_path) {
+                    if let Ok(lock) = Lockfile::from_toml_str(&content) {
+                        if lock.satisfies_requirements(&root_manifest.dependencies) {
+                            resolved = lock.package_map();
+                            use_lock = true;
+                            info!("🔒 Reusing locked package versions from peri.lock");
+                        }
+                    }
+                }
+            }
+
+            if !use_lock {
+                info!("🧩 Running PubGrub CDCL SAT solver for dependencies...");
+                resolved = solve_workspace(&catalog, root_manifest)?;
+                let lockfile = Lockfile::from_solution(&resolved);
+                let lock_toml = lockfile.to_toml_str()?;
+                fs::write(&lockfile_path, lock_toml)
+                    .map_err(|e| CliError::Workspace(e.to_string()))?;
+                println!("🔒 Generated updated {}", LOCKFILE_FILENAME);
+            }
+            Some(resolved)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Filter to active packages based on PubGrub version selection if resolved
+    let active_peca_files: Vec<(Manifest, PathBuf)> = if let Some(ref selected) = selected_versions
+    {
+        peca_files
+            .into_iter()
+            .filter(|(m, _)| {
+                if let Some(target_v) = selected.get(&m.package.name) {
+                    if let Ok(v) = semver::Version::parse(&m.package.version) {
+                        return &v == target_v;
+                    }
+                }
+                false
+            })
+            .collect()
+    } else {
+        peca_files
+    };
+
+    let mut graph = DependencyGraph::new();
+    let mut vfi = VirtualFileIndex::new();
+
+    for (manifest, path) in &active_peca_files {
+        let index = load_or_cache_vfi(&vfi_cache_dir, path, manifest)?;
+        vfi.add_package_index(&index, |p| {
+            game_profile
+                .map_path(Path::new(p))
+                .to_string_lossy()
+                .into_owned()
+        });
+        graph.add_manifest(manifest.clone());
+    }
+
+    // Stage 3: Apply the 3-Tier Resolution Waterfall
     let _reports = vfi.resolve_conflicts_waterfall(&mut graph, &overrides)?;
 
-    // Validate DAG and resolve order
+    // Stage 2: Validate DAG and resolve load order
     let resolved_order = graph.resolve_load_order()?;
     println!("🔄 Resolving load order and synchronizing VFS layers...");
 
     for name in &resolved_order {
-        if let Some((manifest, peca_path)) =
-            peca_files.iter().find(|(m, _)| &m.package.name == name)
+        if let Some((manifest, peca_path)) = active_peca_files
+            .iter()
+            .find(|(m, _)| &m.package.name == name)
         {
             let dest_layer = extracted_dir.join(&manifest.package.name);
             extract_peca(peca_path, &dest_layer)?;
@@ -437,13 +508,15 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
     let root_manifest_path = workspace.join(MANIFEST_FILENAME);
     let mut overrides: HashMap<String, OverrideRule> = HashMap::new();
     let mut game_profile = GameProfile::generic("generic");
+    let mut root_manifest_opt = None;
 
     if root_manifest_path.exists() {
         let content = fs::read_to_string(&root_manifest_path)
             .map_err(|e| CliError::Workspace(e.to_string()))?;
         let root_manifest = Manifest::from_toml_str(&content)?;
-        overrides = root_manifest.overrides.into_iter().collect();
+        overrides = root_manifest.overrides.clone().into_iter().collect();
         game_profile = resolve_game_profile(&workspace, &root_manifest.target.game_id);
+        root_manifest_opt = Some(root_manifest);
     }
 
     let cache_dir = workspace.join(CACHE_MODS_DIR);
@@ -452,6 +525,7 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
         return Ok(());
     }
 
+    let mut catalog = PackageCatalog::new();
     let mut graph = DependencyGraph::new();
     let mut vfi = VirtualFileIndex::new();
     let mut count = 0;
@@ -462,6 +536,7 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
         let path = entry.path();
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("peca") {
             let manifest = read_manifest_from_peca(&path)?;
+            catalog.add_package(manifest.clone());
             let index = load_or_cache_vfi(&vfi_cache_dir, &path, &manifest)?;
             vfi.add_package_index(&index, |p| {
                 game_profile
@@ -474,8 +549,19 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
         }
     }
 
+    // Stage 1: Validate version constraints with PubGrub
+    if let Some(ref root_manifest) = root_manifest_opt {
+        if !root_manifest.dependencies.is_empty() {
+            let solved = solve_workspace(&catalog, root_manifest)?;
+            println!(
+                "✅ Stage 1: PubGrub SAT solver verified {} version constraints.",
+                solved.len()
+            );
+        }
+    }
+
     println!(
-        "🔍 Validating dependency DAG and Virtual File Index (VFI) for {} packages...",
+        "🔍 Stage 2 & 3: Validating dependency DAG and Virtual File Index (VFI) for {} packages...",
         count
     );
 

@@ -30,8 +30,9 @@ serde_spanned = "0.6"
 toml = { version = "0.8", features = ["preserve_order"] }
 semver = { version = "1.0", features = ["serde"] }
 
-# Graph Solving
+# Graph & Constraint Solving
 petgraph = "0.7"
+pubgrub = "0.3"
 
 # Diagnostics & Error handling
 thiserror = "2.0"
