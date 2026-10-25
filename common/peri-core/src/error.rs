@@ -1,4 +1,5 @@
 use miette::{Diagnostic, SourceSpan};
+use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Error, Diagnostic, Clone, PartialEq, Eq)]
@@ -158,4 +159,40 @@ pub enum ProfileError {
     #[error("Invalid profile configuration: {0}")]
     #[diagnostic(code(peri::profile::invalid))]
     InvalidProfile(String),
+}
+
+#[derive(Debug, Error, Diagnostic, Clone, PartialEq, Eq)]
+pub enum ConfigError {
+    #[error("Failed to parse global config: {0}")]
+    #[diagnostic(
+        code(peri::config::parse_error),
+        help("Verify the TOML syntax in your ~/.config/perihelion/config.toml")
+    )]
+    ParseError(String),
+
+    #[error("Invalid configuration value for '{key}': {reason}")]
+    #[diagnostic(code(peri::config::invalid_value))]
+    InvalidValue { key: String, reason: String },
+}
+
+#[derive(Debug, Error, Diagnostic, Clone, PartialEq, Eq)]
+pub enum SecurityError {
+    #[error(
+        "Sandbox security violation: Path '{path}' is outside allowed boundary '{allowed_root}'"
+    )]
+    #[diagnostic(
+        code(peri::security::sandbox_violation),
+        help("Package operations and cache directories must strictly reside within the user's home or authorized directory.")
+    )]
+    SandboxViolation {
+        path: PathBuf,
+        allowed_root: PathBuf,
+    },
+
+    #[error("Path traversal detected: Path '{0}' contains forbidden parent ('..') references")]
+    #[diagnostic(
+        code(peri::security::path_traversal),
+        help("Archive paths cannot contain '..' segments to escape the target directory.")
+    )]
+    PathTraversal(PathBuf),
 }

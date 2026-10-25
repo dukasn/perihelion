@@ -1,7 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
+use directories::ProjectDirs;
 use miette::Result;
+use peri_core::{validate_safe_path, GlobalConfig, CONFIG_FILENAME};
 use peri_net::torrent::{SeedingConfig, TorrentEngine};
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -15,21 +17,45 @@ use tracing_subscriber::FmtSubscriber;
 )]
 struct Args {
     /// Path to the Perihelion cache directory
-    #[arg(short, long, default_value = "~/.config/perihelion/cache/mods")]
-    cache_dir: PathBuf,
+    #[arg(short, long)]
+    cache_dir: Option<PathBuf>,
 
     /// Maximum upload speed in KB/s (0 for unlimited)
-    #[arg(short, long, default_value_t = 1024)]
-    upload_limit: u32,
+    #[arg(short, long)]
+    upload_limit: Option<u32>,
 
     /// Enable verbose debug logging
     #[arg(short, long)]
     verbose: bool,
 }
 
+fn load_global_config() -> GlobalConfig {
+    let config_dir = if let Some(proj_dirs) = ProjectDirs::from("com", "perihelion", "perihelion") {
+        proj_dirs.config_dir().to_path_buf()
+    } else if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".config/perihelion")
+    } else {
+        PathBuf::from(".config/perihelion")
+    };
+    let config_file = config_dir.join(CONFIG_FILENAME);
+    if config_file.exists() {
+        if let Ok(content) = std::fs::read_to_string(&config_file) {
+            if let Ok(cfg) = GlobalConfig::from_toml_str(&content) {
+                return cfg;
+            }
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        GlobalConfig::default_for_home(Path::new(&home))
+    } else {
+        GlobalConfig::default()
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    let global_config = load_global_config();
 
     // 1. Initialize logging
     let max_level = if args.verbose {
@@ -44,8 +70,17 @@ async fn main() -> Result<()> {
         .finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
 
-    let expanded_cache = shellexpand::tilde(&args.cache_dir.to_string_lossy()).into_owned();
+    let raw_cache = args
+        .cache_dir
+        .unwrap_or(global_config.storage.global_cache_dir);
+    let expanded_cache = shellexpand::tilde(&raw_cache.to_string_lossy()).into_owned();
     let cache_path = PathBuf::from(expanded_cache);
+
+    // Sandbox boundary validation: Cache must reside within user's home
+    if let Ok(home) = std::env::var("HOME") {
+        validate_safe_path(&cache_path, Path::new(&home))
+            .map_err(|e| miette::miette!("Security violation: {}", e))?;
+    }
 
     if !cache_path.exists() {
         warn!(
@@ -55,16 +90,17 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    let upload_limit = args
+        .upload_limit
+        .unwrap_or(global_config.network.daemon_upload_limit_kbs);
+
     info!("🚀 Starting perid - Perihelion Seeding Daemon");
     info!(cache = %cache_path.display(), "Monitoring cache");
-    info!(
-        limit_kbs = args.upload_limit,
-        "Upload rate limit configured"
-    );
+    info!(limit_kbs = upload_limit, "Upload rate limit configured");
 
     // 2. Initialize the P2P Engine from our peri-net adapter
     let config = SeedingConfig {
-        upload_limit_kbs: args.upload_limit,
+        upload_limit_kbs: upload_limit,
     };
 
     let engine = TorrentEngine::new_with_download_dir(&cache_path, config)

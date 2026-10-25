@@ -2371,6 +2371,7 @@ name = "peri"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "directories",
  "miette",
  "peri-archive",
  "peri-core",
@@ -2448,7 +2449,9 @@ name = "perid"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "directories",
  "miette",
+ "peri-core",
  "peri-net",
  "shellexpand",
  "tokio",

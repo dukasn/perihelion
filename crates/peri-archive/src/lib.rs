@@ -7,7 +7,7 @@ use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read};
 use std::path::{Path, PathBuf};
 
-use peri_core::{Manifest, PackageFileIndex, MANIFEST_FILENAME};
+use peri_core::{validate_safe_path, Manifest, PackageFileIndex, SecurityError, MANIFEST_FILENAME};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -30,6 +30,9 @@ pub enum ArchiveError {
 
     #[error("Missing mandatory root '{MANIFEST_FILENAME}' manifest in .peca archive")]
     MissingManifest,
+
+    #[error("Security violation: {0}")]
+    Security(#[from] SecurityError),
 
     #[error("Security violation: {0}")]
     SecurityViolation(String),
@@ -200,16 +203,8 @@ pub fn extract_peca_stream<R: Read>(
         let mut entry = entry_result?;
         let path = entry.path()?.into_owned();
 
-        // Security check: Prevent path traversal attacks (e.g. ../../etc/shadow)
-        if path
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            return Err(ArchiveError::SecurityViolation(format!(
-                "Path traversal detected in archive entry: {}",
-                path.display()
-            )));
-        }
+        // Security check: Zero-trust sandbox boundary and path traversal enforcement
+        validate_safe_path(&path, destination_dir)?;
 
         let path_str = path.to_string_lossy().to_string();
         if path_str != MANIFEST_FILENAME && !entry.header().entry_type().is_dir() {

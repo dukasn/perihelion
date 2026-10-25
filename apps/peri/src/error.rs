@@ -15,6 +15,14 @@ pub enum CliError {
     #[diagnostic(transparent)]
     Profile(#[from] peri_core::ProfileError),
 
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Config(#[from] peri_core::ConfigError),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Security(#[from] peri_core::SecurityError),
+
     #[error("Archive error: {0}")]
     #[diagnostic(
         code(peri::archive_error),

@@ -8,17 +8,19 @@ use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 mod cli;
+mod config;
 mod error;
 
 use cli::{CheckArgs, Cli, Commands, GetArgs, InitArgs, PackageArgs, RunArgs, SyncArgs};
+use config::load_global_config;
 use error::CliError;
 use peri_archive::{
     compute_file_sha256, create_peca, extract_peca, generate_package_file_index,
     load_package_vfi_cache, read_manifest_from_peca, save_package_vfi_cache,
 };
 use peri_core::{
-    DependencyGraph, GameProfile, Manifest, OverrideRule, PackageFileIndex, PackageMetadata,
-    ResolutionSource, TargetGame, VirtualFileIndex, MANIFEST_FILENAME,
+    validate_safe_path, DependencyGraph, GameProfile, Manifest, OverrideRule, PackageFileIndex,
+    PackageMetadata, ResolutionSource, TargetGame, VirtualFileIndex, MANIFEST_FILENAME,
 };
 use peri_vfs::VfsPlan;
 
@@ -233,6 +235,7 @@ async fn handle_package(args: PackageArgs) -> Result<(), CliError> {
 }
 
 async fn handle_get(args: GetArgs) -> Result<(), CliError> {
+    let _global_config = load_global_config();
     let cache_dir = Path::new(CACHE_MODS_DIR);
     fs::create_dir_all(cache_dir).map_err(|e| CliError::Workspace(e.to_string()))?;
 
@@ -248,11 +251,17 @@ async fn handle_get(args: GetArgs) -> Result<(), CliError> {
                 .unwrap_or_else(|| PathBuf::from("downloaded.peca"))
         });
         dest_file = cache_dir.join(filename);
+        if let Some(home) = config::resolve_home_dir() {
+            validate_safe_path(&dest_file, &home)?;
+        }
         info!(url = %uri, "Downloading archive over HTTP");
         peri_net::fetch_http(uri, &dest_file, None).await?;
     } else if uri.starts_with("magnet:") {
         let filename = args.output.unwrap_or_else(|| PathBuf::from("torrent.peca"));
         dest_file = cache_dir.join(filename);
+        if let Some(home) = config::resolve_home_dir() {
+            validate_safe_path(&dest_file, &home)?;
+        }
         info!(magnet = %uri, "Downloading archive via BitTorrent");
         peri_net::fetch_magnet(uri, &dest_file).await?;
     } else {
@@ -268,6 +277,9 @@ async fn handle_get(args: GetArgs) -> Result<(), CliError> {
                 .unwrap_or_else(|| PathBuf::from("mod.peca"))
         });
         dest_file = cache_dir.join(filename);
+        if let Some(home) = config::resolve_home_dir() {
+            validate_safe_path(&dest_file, &home)?;
+        }
         fs::copy(source_path, &dest_file).map_err(|e| CliError::Archive(e.to_string()))?;
     }
 
