@@ -1,14 +1,12 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap},
     Frame,
 };
 
-use crate::theme::{
-    keycap, COLOR_BORDER_FOCUSED, COLOR_CYAN, COLOR_SEPARATOR, COLOR_TEXT_MUTED, COLOR_TEXT_PRIMARY,
-};
+use crate::theme::{keycap, COLOR_BORDER_FOCUSED, COLOR_CYAN, COLOR_SEPARATOR, COLOR_TEXT_PRIMARY};
 
 pub fn render_help_modal(f: &mut Frame, area: Rect) {
     let popup_area = centered_rect(68, 78, area);
@@ -24,21 +22,7 @@ pub fn render_help_modal(f: &mut Frame, area: Rect) {
                 .fg(COLOR_BORDER_FOCUSED)
                 .add_modifier(Modifier::BOLD),
         )
-        .padding(Padding::new(3, 3, 1, 1))
-        .title(
-            Line::from(Span::styled(
-                " ◆ Helion — Mod Fearlessly. Share Instantly. ",
-                Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD),
-            ))
-            .alignment(Alignment::Left),
-        )
-        .title(
-            Line::from(Span::styled(
-                " [Esc / ? / F1] Close ",
-                Style::default().fg(COLOR_TEXT_MUTED),
-            ))
-            .alignment(Alignment::Right),
-        );
+        .padding(Padding::new(3, 3, 1, 1));
 
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
@@ -67,11 +51,11 @@ pub fn render_help_modal(f: &mut Frame, area: Rect) {
             "Switch top-level pages (Overview, Mods, Conflicts, Downloads, Profiles)",
         ),
         shortcut_row(
-            "/  ·  c     ",
+            "/  |  c     ",
             "Focus Quick Action Bar on Overview [1] or Filter / Input on other tabs",
         ),
         shortcut_row(
-            "↑/k  ↓/j    ",
+            "Up/k  Dn/j  ",
             "Navigate items vertically; g/Home & G/End jump to top/bottom",
         ),
         shortcut_row("Ctrl+U / D  ", "Page Up / Page Down through package lists"),
@@ -94,13 +78,13 @@ pub fn render_help_modal(f: &mut Frame, area: Rect) {
         ),
         shortcut_row(
             "J / K       ",
-            "Move selected mod Down / Up in the load order (also Alt+↑/↓)",
+            "Move selected mod Down / Up in the load order (also Alt+Up/Down)",
         ),
         shortcut_row("p / P (+ / -)", "Cycle Priority Tier forward / backward"),
         shortcut_row("c / C       ", "Cycle Category Filter forward / backward"),
         shortcut_row(
-            "/  ·  Ctrl+L",
-            "Focus search input well · Clear active search & category filters",
+            "/  |  Ctrl+L",
+            "Focus search input well | Clear active search & category filters",
         ),
         shortcut_row("i           ", "Show / hide the Package Inspector drawer"),
         Line::from(""),
@@ -119,7 +103,7 @@ pub fn render_help_modal(f: &mut Frame, area: Rect) {
         ),
         shortcut_row(
             "n / t / f   ",
-            "New Profile input [4] · Cycle Target Game [4] · Fix Check [4]",
+            "New Profile input [4] | Cycle Target Game [4] | Fix Check [4]",
         ),
         shortcut_row(
             "u           ",

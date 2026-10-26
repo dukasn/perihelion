@@ -1,7 +1,7 @@
 # Perihelion
 
 <div align="center">
-  <img src="./assets/perihelion-banner.png" alt="Perihelion Banner - Mod Fearlessly. Share Instantly." width="auto" height="auto"/>
+  <img src="./assets/perihelion-banner.webp" alt="Perihelion Banner - Mod Fearlessly. Share Instantly." width="auto" height="auto"/>
   <p>
     <em>No 40-step installation guides. No throttled 2 MB/s download caps.<br/>
     Perihelion turns entire modded setups into lightweight, shareable blueprints you can sync and play in one command.</em>
@@ -126,6 +126,14 @@ cargo run -p peri -- --help
 
 ---
 
-## License
+<br/>
 
-Dual-licensed under either Apache License, Version 2.0 or MIT License at your option.
+<div align="center">
+  <a href="./LICENSE">
+    <img src="./gplv3.webp" alt="GPLv3 License." width="320px" height="auto"/>
+  </a>
+  <p>
+  Licensed under GPLv3
+  </p>
+</div>
+

@@ -57,10 +57,12 @@ impl Autocomplete {
         const ROOT_COMMANDS: &[&str] = &[
             "clone ",
             "download ",
+            "find ",
+            "search ",
             "switch ",
             "profile ",
-            "search ",
             "launch",
+            "run",
             "conflicts",
             "mods",
             "downloads",
@@ -83,18 +85,21 @@ impl Autocomplete {
             };
             let arg = &trimmed[prefix.len()..];
 
-            let mut candidates: Vec<String> = vec![
-                "essential_bug_fixes".to_string(),
-                "nordic_ui_minimalist".to_string(),
-                "realistic_water_two".to_string(),
-                "skse64".to_string(),
-                "https://mods.perihelion.io/".to_string(),
-            ];
+            let mut candidates: Vec<String> =
+                vec!["https://".to_string(), "magnet:?xt=urn:btih:".to_string()];
             for p in &app.curated_packages {
                 candidates.push(p.title.to_lowercase().replace(' ', "_"));
             }
             for m in &app.mods {
                 candidates.push(m.id.clone());
+            }
+            if let Ok(entries) = std::fs::read_dir(".perihelion/cache/mods") {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.ends_with(".peca") {
+                        candidates.push(name.trim_end_matches(".peca").to_string());
+                    }
+                }
             }
 
             let candidate_refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
@@ -181,15 +186,24 @@ impl Autocomplete {
             return None;
         }
 
-        let mut candidates: Vec<String> = vec![
-            "https://mods.perihelion.io/".to_string(),
-            "magnet:?xt=urn:btih:".to_string(),
-            "realistic_water_two.peca".to_string(),
-            "essential_bug_fixes.peca".to_string(),
-            "nordic_ui.peca".to_string(),
-            "skyui_next.peca".to_string(),
-            "skse64_build.peca".to_string(),
-        ];
+        let mut candidates: Vec<String> =
+            vec!["https://".to_string(), "magnet:?xt=urn:btih:".to_string()];
+        if let Ok(entries) = std::fs::read_dir(".") {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".peca") {
+                    candidates.push(name);
+                }
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir(".perihelion/cache/mods") {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".peca") {
+                    candidates.push(name);
+                }
+            }
+        }
         for d in &app.downloads {
             candidates.push(format!("{}.peca", d.name.to_lowercase().replace(' ', "_")));
         }
@@ -214,32 +228,16 @@ impl Autocomplete {
             return None;
         }
 
-        let mut candidates: Vec<String> = Vec::new();
+        let mut candidates: Vec<String> = vec![
+            "Default".to_string(),
+            "Vanilla+".to_string(),
+            "Modded".to_string(),
+            "Testing".to_string(),
+            "Hardcore".to_string(),
+        ];
         if let Some(game) = app.game_catalog.get(app.new_profile_game_idx) {
-            match game.game_id.as_str() {
-                "skyrim_se" => {
-                    candidates.push("Requiem Hardcore".to_string());
-                    candidates.push("Vanilla+ Light Fixes".to_string());
-                    candidates.push("Nolvus High-End".to_string());
-                    candidates.push("Lore-Friendly Visuals".to_string());
-                }
-                "cyberpunk_2077" => {
-                    candidates.push("Cyberware & Vehicles".to_string());
-                    candidates.push("Night City Enhanced".to_string());
-                    candidates.push("Edgerunners Mode".to_string());
-                }
-                "starfield" => {
-                    candidates.push("Constellation Fleet".to_string());
-                    candidates.push("NASAPunk Explorers".to_string());
-                    candidates.push("Shipbuilder Deluxe".to_string());
-                }
-                "baldurs_gate_3" => {
-                    candidates.push("Tactician Plus".to_string());
-                    candidates.push("Honor Mode Overhaul".to_string());
-                    candidates.push("5e Spells & Classes".to_string());
-                }
-                _ => {}
-            }
+            candidates.push(format!("{} Modded", game.short_name));
+            candidates.push(format!("{} Vanilla+", game.short_name));
         }
 
         for p in &app.profiles {

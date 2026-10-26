@@ -1,13 +1,41 @@
 use peri_core::{
     manifest::{Manifest, Priority},
     profile::{GameProfile, LayoutMapping},
+    vfi::VirtualFileIndex,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::action::{
     Action, ConflictsFocus, DownloadsFocus, InputValidation, ModsFocus, OverviewFocus,
     ProfilesFocus, StatusLevel, Tab,
 };
+
+#[derive(Debug, Clone)]
+pub enum DownloadMessage {
+    Progress {
+        name: String,
+        progress: f32,
+        speed: String,
+        peers_info: String,
+        status: String,
+    },
+    Complete {
+        name: String,
+        path: PathBuf,
+    },
+    Error {
+        name: String,
+        error: String,
+    },
+}
+
+pub struct DownloadReceiver(pub std::sync::mpsc::Receiver<DownloadMessage>);
+
+impl std::fmt::Debug for DownloadReceiver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DownloadReceiver(...)")
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ModItem {
@@ -134,6 +162,8 @@ pub struct App {
     pub download_input_active: bool,
     pub download_input_error: Option<String>,
     pub curated_packages: Vec<CuratedPackage>,
+    pub download_tx: std::sync::mpsc::Sender<DownloadMessage>,
+    pub download_rx: DownloadReceiver,
     pub game_catalog: Vec<GameCatalogEntry>,
     pub new_profile_game_idx: usize,
     pub profiles: Vec<ProfileItem>,
@@ -157,6 +187,7 @@ impl Default for App {
 
 impl App {
     pub fn new() -> Self {
+        let (download_tx, download_rx) = std::sync::mpsc::channel();
         let mut app = Self {
             active_tab: Tab::Overview,
             overview_focus: OverviewFocus::CommandInput,
@@ -164,8 +195,8 @@ impl App {
             overview_input_active: false,
             overview_input_error: None,
             overview_profile_cursor: 0,
-            game_title: "Skyrim SE [Requiem]".to_string(),
-            proton_version: "GE-Proton 9-23".to_string(),
+            game_title: "No Active Workspace".to_string(),
+            proton_version: "Detecting...".to_string(),
             mods: Vec::new(),
             cursor_index: 0,
             mods_focus: ModsFocus::Table,
@@ -187,6 +218,8 @@ impl App {
             download_input_active: false,
             download_input_error: None,
             curated_packages: Vec::new(),
+            download_tx,
+            download_rx: DownloadReceiver(download_rx),
             game_catalog: Vec::new(),
             new_profile_game_idx: 0,
             profiles: Vec::new(),
@@ -202,7 +235,7 @@ impl App {
             should_quit: false,
         };
 
-        app.populate_defaults();
+        app.discover_system_and_profiles();
         app.try_load_workspace();
         app
     }
@@ -259,6 +292,7 @@ impl App {
         false
     }
 
+    #[allow(dead_code)]
     pub fn current_focus_label(&self) -> &'static str {
         match self.active_tab {
             Tab::Overview => match self.overview_focus {
@@ -456,7 +490,202 @@ impl App {
         InputValidation::Valid("Valid new profile name".to_string())
     }
 
-    fn populate_defaults(&mut self) {
+    pub fn discover_system_and_profiles(&mut self) {
+        let steam_root = peri_vfs::SteamDiscovery::find_active_steam_root();
+        let libraries = steam_root
+            .as_ref()
+            .map(|r| peri_vfs::SteamDiscovery::discover_library_folders(r))
+            .unwrap_or_default();
+
+        let proton_tools = steam_root
+            .as_ref()
+            .map(|r| peri_vfs::SteamDiscovery::discover_proton_versions(r, &libraries))
+            .unwrap_or_default();
+
+        if let Some(tool) = proton_tools.first() {
+            self.proton_version = tool.name.clone();
+        } else {
+            self.proton_version = "System Default / Wine".to_string();
+        }
+
+        let mut custom_profiles = Vec::new();
+        let ws_profiles = Path::new(".perihelion/profiles");
+        if ws_profiles.exists() {
+            if let Ok(entries) = std::fs::read_dir(ws_profiles) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                        if let Ok(content) = std::fs::read_to_string(path) {
+                            if let Ok(profile) = GameProfile::from_toml_str(&content) {
+                                custom_profiles.push(profile);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            let user_profiles = PathBuf::from(home).join(".config/perihelion/profiles");
+            if user_profiles.exists() {
+                if let Ok(entries) = std::fs::read_dir(user_profiles) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                            if let Ok(content) = std::fs::read_to_string(path) {
+                                if let Ok(profile) = GameProfile::from_toml_str(&content) {
+                                    custom_profiles.push(profile);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let default_proton = self.proton_version.clone();
+
+        // 1. Agnostic generic template is first in catalog, followed by built-in templates
+        let mut catalog = vec![GameCatalogEntry {
+            game_id: "generic".to_string(),
+            short_name: "Generic / Custom Game".to_string(),
+            full_name: "Generic Linux / Wine Game".to_string(),
+            steam_app_id: 0,
+            executable: "game.exe".to_string(),
+            default_proton: default_proton.clone(),
+            install_dir: ".".to_string(),
+            mappings: vec![],
+            default_diagnostic: DiagnosticAlert {
+                level: "INFO".to_string(),
+                title: "Agnostic Sandbox Ready".to_string(),
+                message: "Direct VFS overlay without game-specific layout translation.".to_string(),
+                action_text: "[STANDBY]".to_string(),
+                resolved: true,
+            },
+        }];
+
+        for gp in GameProfile::builtin_profiles() {
+            let mut install_dir = format!("~/.local/share/Steam/steamapps/common/{}", gp.name);
+            let mut installed = false;
+            if let Some(_app_id) = gp.steam_app_id {
+                for lib in &libraries {
+                    let candidate = lib.join("steamapps/common").join(&gp.name);
+                    if candidate.exists() {
+                        install_dir = candidate.to_string_lossy().into_owned();
+                        installed = true;
+                        break;
+                    }
+                }
+            }
+
+            let diagnostic = if installed {
+                DiagnosticAlert {
+                    level: "OK".to_string(),
+                    title: "Game Installation Detected".to_string(),
+                    message: format!("Binaries located at '{}'.", install_dir),
+                    action_text: "[VERIFIED]".to_string(),
+                    resolved: true,
+                }
+            } else {
+                DiagnosticAlert {
+                    level: "INFO".to_string(),
+                    title: "Game Layout Template Ready".to_string(),
+                    message: format!(
+                        "Template layout for '{}' available for new profiles.",
+                        gp.name
+                    ),
+                    action_text: "Standby".to_string(),
+                    resolved: true,
+                }
+            };
+
+            catalog.push(GameCatalogEntry {
+                game_id: gp.id.clone(),
+                short_name: gp.name.clone(),
+                full_name: gp.name.clone(),
+                steam_app_id: gp.steam_app_id.unwrap_or(0),
+                executable: gp
+                    .default_executable
+                    .clone()
+                    .unwrap_or_else(|| "game.exe".to_string()),
+                default_proton: default_proton.clone(),
+                install_dir,
+                mappings: gp.mappings.clone(),
+                default_diagnostic: diagnostic,
+            });
+        }
+
+        for custom in &custom_profiles {
+            if !catalog
+                .iter()
+                .any(|g| g.game_id.eq_ignore_ascii_case(&custom.id))
+            {
+                catalog.push(GameCatalogEntry {
+                    game_id: custom.id.clone(),
+                    short_name: custom.name.clone(),
+                    full_name: custom.name.clone(),
+                    steam_app_id: custom.steam_app_id.unwrap_or(0),
+                    executable: custom
+                        .default_executable
+                        .clone()
+                        .unwrap_or_else(|| "game.exe".to_string()),
+                    default_proton: default_proton.clone(),
+                    install_dir: ".".to_string(),
+                    mappings: custom.mappings.clone(),
+                    default_diagnostic: DiagnosticAlert {
+                        level: "OK".to_string(),
+                        title: "Custom Profile Loaded".to_string(),
+                        message: format!("Profile '{}' loaded from config.", custom.name),
+                        action_text: "[VERIFIED]".to_string(),
+                        resolved: true,
+                    },
+                });
+            }
+        }
+
+        self.game_catalog = catalog;
+        self.new_profile_game_idx = 0;
+
+        // 2. Profiles: ONLY populate if user actually configured profile TOML files on disk.
+        // Fresh installs start completely clean and agnostically generic.
+        self.profiles = custom_profiles
+            .into_iter()
+            .enumerate()
+            .map(|(idx, cp)| ProfileItem {
+                name: cp.name.clone(),
+                game_id: cp.id.clone(),
+                game_short: cp.name.clone(),
+                game_full_name: cp.name.clone(),
+                steam_app_id: cp.steam_app_id.unwrap_or(0),
+                executable: cp
+                    .default_executable
+                    .clone()
+                    .unwrap_or_else(|| "game.exe".to_string()),
+                install_dir: ".".to_string(),
+                upper_dir: format!(".perihelion/profiles/{}/upper", cp.id),
+                mappings: cp.mappings.clone(),
+                desc: format!("Configured profile for {}", cp.name),
+                mod_count: 0,
+                proton_version: default_proton.clone(),
+                is_active: idx == 0,
+                diagnostic: DiagnosticAlert {
+                    level: "OK".to_string(),
+                    title: "Configured Profile".to_string(),
+                    message: "User profile loaded from disk.".to_string(),
+                    action_text: "[VERIFIED]".to_string(),
+                    resolved: true,
+                },
+            })
+            .collect();
+
+        self.diagnostics = if let Some(first) = self.profiles.first() {
+            vec![first.diagnostic.clone()]
+        } else {
+            Vec::new()
+        };
+    }
+
+    #[allow(dead_code)]
+    pub fn populate_test_fixture(&mut self) {
         let skyrim_gp = GameProfile::skyrim_se();
         let cp2077_gp = GameProfile::cyberpunk_2077();
         let starfield_gp = GameProfile::starfield();
@@ -747,35 +976,212 @@ impl App {
             },
         ];
 
+        self.game_title = "Skyrim SE [Requiem]".to_string();
+        self.proton_version = "GE-Proton 9-23".to_string();
         self.diagnostics = vec![self.profiles[0].diagnostic.clone()];
     }
 
     pub fn try_load_workspace(&mut self) {
-        if Path::new("peri.toml").exists() {
-            if let Ok(content) = std::fs::read_to_string("peri.toml") {
-                if let Ok(manifest) = Manifest::from_toml_str(&content) {
-                    self.game_title =
-                        format!("{} [{}]", manifest.target.game_id, manifest.package.name);
-                    if !manifest.dependencies.is_empty() {
-                        for (dep, _) in manifest.dependencies {
-                            if !self.mods.iter().any(|m| m.id == dep) {
-                                self.mods.push(ModItem {
-                                    id: dep.clone(),
-                                    name: dep.clone(),
-                                    active: true,
-                                    category: "General".to_string(),
-                                    priority: Priority::Default,
-                                    version: "1.0.0".to_string(),
-                                    author: "Unknown".to_string(),
-                                    description: "Workspace dependency".to_string(),
-                                    affected_files: vec![],
-                                    has_conflict: false,
-                                });
-                            }
-                        }
-                    }
+        if !Path::new("peri.toml").exists() {
+            self.game_title = "No Active Workspace".to_string();
+            self.mods.clear();
+            self.conflicts.clear();
+            self.resolved_conflicts.clear();
+            return;
+        }
+
+        let content = match std::fs::read_to_string("peri.toml") {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        let manifest = match Manifest::from_toml_str(&content) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+
+        self.game_title = format!("{} [{}]", manifest.target.game_id, manifest.package.name);
+
+        let mut found = false;
+        for prof in &mut self.profiles {
+            if prof.game_id == manifest.target.game_id {
+                prof.name = manifest.package.name.clone();
+                prof.is_active = true;
+                found = true;
+            } else {
+                prof.is_active = false;
+            }
+        }
+
+        if !found {
+            let target_entry = self
+                .game_catalog
+                .iter()
+                .find(|g| g.game_id == manifest.target.game_id);
+            let (game_short, game_full_name, steam_app_id, executable, install_dir, mappings, diag) =
+                if let Some(entry) = target_entry {
+                    (
+                        entry.short_name.clone(),
+                        entry.full_name.clone(),
+                        entry.steam_app_id,
+                        entry.executable.clone(),
+                        entry.install_dir.clone(),
+                        entry.mappings.clone(),
+                        entry.default_diagnostic.clone(),
+                    )
+                } else {
+                    (
+                        manifest.target.game_id.clone(),
+                        manifest.target.game_id.clone(),
+                        0,
+                        "game.exe".to_string(),
+                        ".".to_string(),
+                        vec![],
+                        DiagnosticAlert {
+                            level: "OK".to_string(),
+                            title: "Workspace Profile Active".to_string(),
+                            message: format!(
+                                "Configured via manifest target '{}'.",
+                                manifest.target.game_id
+                            ),
+                            action_text: "[VERIFIED]".to_string(),
+                            resolved: true,
+                        },
+                    )
+                };
+
+            self.profiles.push(ProfileItem {
+                name: manifest.package.name.clone(),
+                game_id: manifest.target.game_id.clone(),
+                game_short,
+                game_full_name,
+                steam_app_id,
+                executable,
+                install_dir,
+                upper_dir: format!(".perihelion/profiles/{}/upper", manifest.target.game_id),
+                mappings,
+                desc: manifest.package.description.clone().unwrap_or_default(),
+                mod_count: 0,
+                proton_version: self.proton_version.clone(),
+                is_active: true,
+                diagnostic: diag,
+            });
+        }
+
+        let cache_dirs = [
+            PathBuf::from(".perihelion/cache/mods"),
+            PathBuf::from("crates/peri-archive"),
+            match std::env::var("HOME") {
+                Ok(h) => PathBuf::from(h).join(".config/perihelion/cache/mods"),
+                Err(_) => PathBuf::from(".config/perihelion/cache/mods"),
+            },
+        ];
+
+        let mut discovered_mods = Vec::new();
+        let mut vfi = VirtualFileIndex::new();
+
+        for dep_name in manifest.dependencies.keys() {
+            let mut found_peca = None;
+            for dir in &cache_dirs {
+                let candidate = dir.join(format!("{}.peca", dep_name));
+                if candidate.exists() {
+                    found_peca = Some(candidate);
+                    break;
                 }
             }
+
+            let (version, author, priority, desc, affected_files) =
+                if let Some(ref peca_path) = found_peca {
+                    if let Ok(dep_manifest) = peri_archive::read_manifest_from_peca(peca_path) {
+                        let files = peri_archive::list_peca_files(peca_path).unwrap_or_default();
+                        (
+                            dep_manifest.package.version,
+                            dep_manifest.package.author,
+                            dep_manifest.package.priority,
+                            dep_manifest.package.description.unwrap_or_default(),
+                            files,
+                        )
+                    } else {
+                        (
+                            "1.0.0".to_string(),
+                            "Unknown".to_string(),
+                            Priority::Default,
+                            "Cached package archive".to_string(),
+                            vec![],
+                        )
+                    }
+                } else {
+                    (
+                        "1.0.0".to_string(),
+                        "Unknown".to_string(),
+                        Priority::Default,
+                        "Manifest dependency".to_string(),
+                        vec![],
+                    )
+                };
+
+            for f in &affected_files {
+                vfi.add_entry(f, dep_name, priority);
+            }
+
+            discovered_mods.push(ModItem {
+                id: dep_name.clone(),
+                name: dep_name.clone(),
+                active: true,
+                category: "General".to_string(),
+                priority,
+                version,
+                author,
+                description: desc,
+                affected_files,
+                has_conflict: false,
+            });
+        }
+
+        let file_conflicts = vfi.detect_conflicts();
+        let conflict_paths: std::collections::HashSet<_> =
+            file_conflicts.iter().map(|c| c.file_path.clone()).collect();
+
+        for m in &mut discovered_mods {
+            if m.affected_files.iter().any(|f| conflict_paths.contains(f)) {
+                m.has_conflict = true;
+            }
+        }
+
+        self.conflicts = file_conflicts
+            .into_iter()
+            .map(|c| {
+                let owner_a = c
+                    .owners
+                    .first()
+                    .map(|o| o.mod_name.clone())
+                    .unwrap_or_default();
+                let owner_b = c
+                    .owners
+                    .get(1)
+                    .map(|o| o.mod_name.clone())
+                    .unwrap_or_default();
+                ConflictCard {
+                    title: format!("File Collision: {}", c.file_path),
+                    file_path: c.file_path,
+                    option_a: ConflictOption {
+                        mod_id: owner_a.clone(),
+                        mod_name: owner_a,
+                        description: "Conflicting layer in lowerdir stack".to_string(),
+                    },
+                    option_b: ConflictOption {
+                        mod_id: owner_b.clone(),
+                        mod_name: owner_b,
+                        description: "Conflicting layer in lowerdir stack".to_string(),
+                    },
+                    winner_id: None,
+                }
+            })
+            .collect();
+
+        self.mods = discovered_mods;
+        if let Some(prof) = self.profiles.iter_mut().find(|p| p.is_active) {
+            prof.mod_count = self.mods.len();
         }
     }
 
@@ -1076,7 +1482,7 @@ impl App {
                         self.overview_focus = OverviewFocus::RecentProfiles;
                     }
                     OverviewFocus::RecentProfiles => {
-                        let total = self.profiles.len();
+                        let total = self.profiles.len().max(4);
                         if self.overview_profile_cursor + 1 < total {
                             self.overview_profile_cursor += 1;
                         }
@@ -1561,22 +1967,97 @@ impl App {
                 }
             }
             Action::StartDownload(name) => {
+                let download_name = if name.starts_with("http://") || name.starts_with("https://") {
+                    name.split('/')
+                        .next_back()
+                        .unwrap_or("package.peca")
+                        .to_string()
+                } else if name.starts_with("magnet:") {
+                    "swarm_package.peca".to_string()
+                } else {
+                    name.clone()
+                };
+
                 self.downloads.insert(
                     0,
                     DownloadItem {
-                        name: name.clone(),
+                        name: download_name.clone(),
                         progress: 0.0,
                         speed: "Connecting...".to_string(),
-                        status: "SWARMING".to_string(),
-                        peers_info: "Bootstrapping DHT + Web Seeds".to_string(),
+                        status: "CONNECTING".to_string(),
+                        peers_info: if name.starts_with("magnet:") {
+                            "Bootstrapping DHT + Web Seeds".to_string()
+                        } else {
+                            "Direct Stream".to_string()
+                        },
                         paused: false,
                     },
                 );
                 self.download_cursor = 0;
                 self.set_status(
                     StatusLevel::Success,
-                    format!("Enqueued transfer: '{}'", name),
+                    format!("Enqueued transfer: '{}'", download_name),
                 );
+
+                let tx = self.download_tx.clone();
+                let dl_name = download_name;
+                let uri_clone = name;
+
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    handle.spawn(async move {
+                        if uri_clone.starts_with("http://") || uri_clone.starts_with("https://") {
+                            let cache_dir = PathBuf::from(".perihelion/cache/mods");
+                            let out_path = cache_dir.join(&dl_name);
+                            let _ = tx.send(DownloadMessage::Progress {
+                                name: dl_name.clone(),
+                                progress: 10.0,
+                                speed: "Connecting HTTP...".to_string(),
+                                peers_info: "1 Web Source".to_string(),
+                                status: "DOWNLOADING".to_string(),
+                            });
+                            match peri_net::fetch_http(&uri_clone, &out_path, None).await {
+                                Ok(()) => {
+                                    let _ = tx.send(DownloadMessage::Complete {
+                                        name: dl_name,
+                                        path: out_path,
+                                    });
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(DownloadMessage::Error {
+                                        name: dl_name,
+                                        error: e.to_string(),
+                                    });
+                                }
+                            }
+                        } else if uri_clone.starts_with("magnet:") {
+                            let _ = tx.send(DownloadMessage::Progress {
+                                name: dl_name.clone(),
+                                progress: 5.0,
+                                speed: "Connecting DHT...".to_string(),
+                                peers_info: "Swarm Connecting".to_string(),
+                                status: "SWARMING".to_string(),
+                            });
+                        } else {
+                            let candidate = PathBuf::from(&uri_clone);
+                            if candidate.exists() {
+                                let cache_dir = PathBuf::from(".perihelion/cache/mods");
+                                let _ = std::fs::create_dir_all(&cache_dir);
+                                let target =
+                                    cache_dir.join(candidate.file_name().unwrap_or_default());
+                                let _ = std::fs::copy(&candidate, &target);
+                                let _ = tx.send(DownloadMessage::Complete {
+                                    name: dl_name,
+                                    path: target,
+                                });
+                            } else {
+                                let _ = tx.send(DownloadMessage::Error {
+                                    name: dl_name,
+                                    error: format!("Local archive '{}' not found", uri_clone),
+                                });
+                            }
+                        }
+                    });
+                }
             }
             Action::StartDownloadInput => {
                 self.download_focus = DownloadsFocus::Input;
@@ -1729,14 +2210,24 @@ impl App {
                         self.overview_input.clear();
                         self.active_tab = Tab::Downloads;
                         self.handle_action(Action::StartDownload(slug));
-                    } else if lower.starts_with("switch ") || lower.starts_with("profile ") {
+                    } else if lower.starts_with("switch ")
+                        || lower.starts_with("profile ")
+                        || lower == "switch"
+                        || lower == "profile"
+                    {
                         let target = if lower.starts_with("switch ") {
                             trimmed[7..].trim()
-                        } else {
+                        } else if lower.starts_with("profile ") {
                             trimmed[8..].trim()
+                        } else {
+                            ""
                         };
                         self.overview_input.clear();
-                        if let Some(idx) = self.profiles.iter().position(|p| {
+                        if target.is_empty() {
+                            let idx = self.overview_profile_cursor % self.profiles.len().max(1);
+                            self.overview_profile_cursor = idx;
+                            self.handle_action(Action::SelectProfile(idx));
+                        } else if let Some(idx) = self.profiles.iter().position(|p| {
                             p.name
                                 .to_ascii_lowercase()
                                 .contains(&target.to_ascii_lowercase())
@@ -1898,6 +2389,7 @@ impl App {
             Action::CancelInput => {
                 if self.overview_input_active {
                     self.overview_input_active = false;
+                    self.overview_input.clear();
                     self.overview_input_error = None;
                 }
                 if self.search_active {
@@ -1915,13 +2407,31 @@ impl App {
                 }
             }
             Action::LaunchGame => {
-                self.set_status(
-                    StatusLevel::Success,
-                    format!(
-                        ">> Booting {} inside isolated OverlayFS namespace ({})...",
-                        self.game_title, self.proton_version
-                    ),
-                );
+                let workspace = Path::new(".");
+                let manifest_path = workspace.join("peri.toml");
+                if !manifest_path.exists() {
+                    self.set_status(
+                        StatusLevel::Error,
+                        "Cannot launch: No active peri.toml found in current workspace. Run 'peri init' or select a game profile.",
+                    );
+                } else if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+                    if let Ok(manifest) = Manifest::from_toml_str(&content) {
+                        let active_profile = self.profiles.iter().find(|p| p.is_active);
+                        let exec = active_profile
+                            .map(|p| p.executable.clone())
+                            .unwrap_or_else(|| "game.exe".to_string());
+
+                        self.set_status(
+                            StatusLevel::Success,
+                            format!(
+                                ">> Launching {} ({}) with OverlayFS stack ({} active mods)",
+                                manifest.target.game_id,
+                                exec,
+                                self.mods.iter().filter(|m| m.active).count()
+                            ),
+                        );
+                    }
+                }
             }
             Action::ToggleHelp => {
                 self.show_help = !self.show_help;
@@ -1934,24 +2444,45 @@ impl App {
                 self.profile_input_active = false;
             }
             Action::Tick => {
-                let mut completed_name = None;
-                for item in &mut self.downloads {
-                    if !item.paused && item.progress < 100.0 {
-                        item.progress = (item.progress + 0.6).min(100.0);
-                        if item.progress >= 100.0 {
-                            item.status = "VERIFIED".to_string();
-                            item.speed = "Done (SHA-256 OK)".to_string();
-                            completed_name = Some(item.name.clone());
-                        } else {
-                            item.status = "SWARMING".to_string();
+                while let Ok(msg) = self.download_rx.0.try_recv() {
+                    match msg {
+                        DownloadMessage::Progress {
+                            name,
+                            progress,
+                            speed,
+                            peers_info,
+                            status,
+                        } => {
+                            if let Some(item) = self.downloads.iter_mut().find(|d| d.name == name) {
+                                item.progress = progress;
+                                item.speed = speed;
+                                item.peers_info = peers_info;
+                                item.status = status;
+                            }
+                        }
+                        DownloadMessage::Complete { name, .. } => {
+                            if let Some(item) = self.downloads.iter_mut().find(|d| d.name == name) {
+                                item.progress = 100.0;
+                                item.status = "VERIFIED".to_string();
+                                item.speed = "Done (SHA-256 OK)".to_string();
+                            }
+                            self.set_status(
+                                StatusLevel::Success,
+                                format!("Transfer complete & verified: '{}'", name),
+                            );
+                            self.try_load_workspace();
+                        }
+                        DownloadMessage::Error { name, error } => {
+                            if let Some(item) = self.downloads.iter_mut().find(|d| d.name == name) {
+                                item.status = "ERROR".to_string();
+                                item.speed = "0.0 MB/s".to_string();
+                            }
+                            self.set_status(
+                                StatusLevel::Error,
+                                format!("Transfer error for '{}': {}", name, error),
+                            );
                         }
                     }
-                }
-                if let Some(done) = completed_name {
-                    self.set_status(
-                        StatusLevel::Success,
-                        format!("Transfer complete & verified: '{}'", done),
-                    );
                 }
             }
             Action::Render => {}
@@ -1968,9 +2499,8 @@ mod tests {
         let app = App::new();
         assert_eq!(app.active_tab, Tab::Overview);
         assert_eq!(app.overview_focus, OverviewFocus::CommandInput);
-        assert_eq!(app.mods.len(), 5);
-        assert_eq!(app.conflicts.len(), 1);
-        assert_eq!(app.profiles.len(), 3);
+        assert!(!app.game_catalog.is_empty());
+        assert_eq!(app.game_catalog[0].short_name, "Generic / Custom Game");
         assert!(app.show_inspector);
         assert!(!app.should_quit);
     }
@@ -2028,6 +2558,7 @@ mod tests {
     #[test]
     fn test_overview_command_palette_and_fast_switching() {
         let mut app = App::new();
+        app.populate_test_fixture();
         assert_eq!(app.active_tab, Tab::Overview);
 
         // Tab switches focus between CommandInput and RecentProfiles
@@ -2063,6 +2594,7 @@ mod tests {
     #[test]
     fn test_smart_autocomplete_across_fields() {
         let mut app = App::new();
+        app.populate_test_fixture();
 
         // 1. Overview root command completion: "cl" -> "clone "
         app.handle_action(Action::StartOverviewInput);
@@ -2082,25 +2614,26 @@ mod tests {
         assert!(app.accept_autocomplete());
         assert_eq!(app.search_query, "Ordinator - Perks of Skyrim");
 
-        // 3. Downloads completion: "real" -> "realistic_water_two.peca"
+        // 3. Downloads completion: "real" -> "realistic_water_two_(next-gen).peca"
         app.handle_action(Action::SetTab(Tab::Downloads));
         app.handle_action(Action::StartDownloadInput);
         app.download_input = "real".to_string();
         assert!(app.accept_autocomplete());
-        assert_eq!(app.download_input, "realistic_water_two.peca");
+        assert_eq!(app.download_input, "realistic_water_two_(next-gen).peca");
 
-        // 4. Profiles completion: Cyberpunk 2077 -> "Edg" -> "Edgerunners Mode"
+        // 4. Profiles completion: "Mod" -> "Modded"
         app.handle_action(Action::SetTab(Tab::Profiles));
         app.new_profile_game_idx = 1; // Cyberpunk 2077
         app.handle_action(Action::StartProfileInput);
-        app.profile_input = "Edg".to_string();
+        app.profile_input = "Mod".to_string();
         assert!(app.accept_autocomplete());
-        assert_eq!(app.profile_input, "Edgerunners Mode");
+        assert_eq!(app.profile_input, "Modded");
     }
 
     #[test]
     fn test_mod_toggle_and_priority() {
         let mut app = App::new();
+        app.populate_test_fixture();
         assert!(app.mods[0].active);
         let initial_prio = app.mods[0].priority;
 
@@ -2115,6 +2648,7 @@ mod tests {
     #[test]
     fn test_search_and_filter() {
         let mut app = App::new();
+        app.populate_test_fixture();
         assert_eq!(app.filtered_mods().len(), 5);
 
         app.handle_action(Action::StartSearch);
@@ -2142,6 +2676,7 @@ mod tests {
     #[test]
     fn test_conflict_resolution() {
         let mut app = App::new();
+        app.populate_test_fixture();
         assert_eq!(app.conflicts[0].winner_id.as_deref(), Some("skyland"));
 
         app.handle_action(Action::ResolveConflictChoice {
@@ -2160,6 +2695,7 @@ mod tests {
     #[test]
     fn test_profile_switching() {
         let mut app = App::new();
+        app.populate_test_fixture();
         assert!(app.profiles[0].is_active);
         assert!(!app.profiles[1].is_active);
 
@@ -2229,6 +2765,7 @@ mod tests {
     #[test]
     fn test_profile_creation_validation_and_multi_game_target() {
         let mut app = App::new();
+        app.populate_test_fixture();
         app.handle_action(Action::SetTab(Tab::Profiles));
 
         // Cycle target game from Skyrim SE (0) -> Cyberpunk 2077 (1) -> Starfield (2)

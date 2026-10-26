@@ -11,22 +11,21 @@ use crate::{
     action::{InputValidation, ModsFocus},
     app::App,
     theme::{
-        card_block, input_block, keycap, panel_block, pill, pill_solid, style_ghost_text,
-        style_placeholder, COLOR_AMBER, COLOR_AMBER_BG, COLOR_BLUE, COLOR_BLUE_BG,
-        COLOR_BORDER_FOCUSED, COLOR_BORDER_NORMAL, COLOR_CYAN, COLOR_CYAN_BG, COLOR_GREEN,
-        COLOR_GREEN_BG, COLOR_INDIGO, COLOR_INDIGO_BG, COLOR_KEYCAP_BG, COLOR_RED, COLOR_RED_BG,
+        box_title_label, card_block, input_block, keycap, panel_block, style_block_right_label,
+        style_ghost_text, style_placeholder, style_selected_row, style_selected_row_secondary,
+        COLOR_AMBER, COLOR_BORDER_FOCUSED, COLOR_BORDER_NORMAL, COLOR_FOCUS, COLOR_RED,
         COLOR_SEPARATOR, COLOR_TEXT_MUTED, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
     },
 };
 
-fn priority_badge_meta(priority: Priority) -> (&'static str, Color, Color) {
+fn priority_label(priority: Priority) -> &'static str {
     match priority {
-        Priority::Lowest => ("= Foundation", COLOR_BLUE, COLOR_BLUE_BG),
-        Priority::Low => ("v Low", COLOR_TEXT_SECONDARY, COLOR_KEYCAP_BG),
-        Priority::Default => ("* Standard", COLOR_INDIGO, COLOR_INDIGO_BG),
-        Priority::High => ("^ High", COLOR_CYAN, COLOR_CYAN_BG),
-        Priority::Highest => ("^^ Highest", COLOR_GREEN, COLOR_GREEN_BG),
-        Priority::Absolute => ("!! Absolute", COLOR_AMBER, COLOR_AMBER_BG),
+        Priority::Lowest => "= Lowest",
+        Priority::Low => "v Low",
+        Priority::Default => "* Default",
+        Priority::High => "^ High",
+        Priority::Highest => "^^ Highest",
+        Priority::Absolute => "!! Absolute",
     }
 }
 
@@ -51,44 +50,23 @@ pub fn render_mods_view(f: &mut Frame, app: &App, area: Rect) {
 fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
     let active_count = app.mods.iter().filter(|m| m.active).count();
     let table_focused = app.mods_focus == ModsFocus::Table;
-    let left_pane_focused = matches!(
-        app.mods_focus,
-        ModsFocus::Table | ModsFocus::Search | ModsFocus::Categories
-    );
 
-    let focus_badge = match app.mods_focus {
-        ModsFocus::Search => pill_solid("FOCUS: SEARCH", COLOR_CYAN),
-        ModsFocus::Categories => pill_solid("FOCUS: CATEGORIES", COLOR_CYAN),
-        ModsFocus::Table => pill_solid("FOCUS: TABLE", COLOR_CYAN),
-        ModsFocus::Inspector => {
-            Span::styled(" [Tab] Cycle Focus ", Style::default().fg(COLOR_TEXT_MUTED))
-        }
-    };
-
-    let block = panel_block(left_pane_focused)
+    let block = panel_block(false)
         .title(
-            Line::from(vec![Span::styled(
-                " ◆ Mod Load Order & Priority ",
+            Line::from(Span::styled(
+                " Mod Load Order & Priority ",
                 Style::default()
-                    .fg(if left_pane_focused {
-                        COLOR_CYAN
-                    } else {
-                        COLOR_TEXT_SECONDARY
-                    })
+                    .fg(COLOR_TEXT_PRIMARY)
                     .add_modifier(Modifier::BOLD),
-            )])
+            ))
             .alignment(Alignment::Left),
         )
         .title(
             Line::from(vec![
                 Span::styled(
                     format!(" {} Active ", active_count),
-                    Style::default()
-                        .fg(COLOR_GREEN)
-                        .add_modifier(Modifier::BOLD),
+                    style_block_right_label(table_focused),
                 ),
-                Span::styled("│ ", Style::default().fg(COLOR_TEXT_MUTED)),
-                focus_badge,
                 Span::raw(" "),
             ])
             .alignment(Alignment::Right),
@@ -128,18 +106,25 @@ fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
     let validation_badge = match &validation {
         InputValidation::Idle => {
             if search_focused {
-                pill_solid("EDITING", COLOR_CYAN)
+                Span::styled("[Esc] Done", style_block_right_label(true))
             } else {
-                pill("/ to filter", COLOR_TEXT_MUTED, COLOR_KEYCAP_BG, false)
+                Span::styled("[/] Filter", style_block_right_label(false))
             }
         }
-        InputValidation::Valid(msg) => {
-            pill(format!("+ {}", msg), COLOR_GREEN, COLOR_GREEN_BG, true)
-        }
-        InputValidation::Warning(msg) => {
-            pill(format!("! {}", msg), COLOR_AMBER, COLOR_AMBER_BG, true)
-        }
-        InputValidation::Invalid(msg) => pill(format!("x {}", msg), COLOR_RED, COLOR_RED_BG, true),
+        InputValidation::Valid(msg) => Span::styled(
+            format!("[OK] {}", msg),
+            style_block_right_label(search_focused),
+        ),
+        InputValidation::Warning(msg) => Span::styled(
+            format!("! {}", msg),
+            Style::default()
+                .fg(COLOR_AMBER)
+                .add_modifier(Modifier::BOLD),
+        ),
+        InputValidation::Invalid(msg) => Span::styled(
+            format!("[X] {}", msg),
+            Style::default().fg(COLOR_RED).add_modifier(Modifier::BOLD),
+        ),
     };
 
     let suggestion = if search_focused {
@@ -150,35 +135,16 @@ fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
 
     let title_line = if let Some(s) = &suggestion {
         Line::from(vec![
+            box_title_label("[/] Filter Input", search_focused),
+            Span::raw(" "),
             Span::styled(
-                " [/] Filter Input ",
-                Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD),
-            ),
-            pill(
-                format!("Tab/→ Complete: {}", s.completed_text),
-                COLOR_CYAN,
-                COLOR_KEYCAP_BG,
-                true,
+                format!("Tab/-> Complete: {}", s.completed_text),
+                Style::default().fg(COLOR_TEXT_MUTED),
             ),
             Span::raw(" "),
         ])
     } else {
-        Line::from(vec![Span::styled(
-            if search_focused {
-                " [/] Filter Input (Focused) "
-            } else {
-                " [/] Filter Input "
-            },
-            Style::default()
-                .fg(if has_err {
-                    COLOR_RED
-                } else if search_focused {
-                    COLOR_CYAN
-                } else {
-                    COLOR_TEXT_SECONDARY
-                })
-                .add_modifier(Modifier::BOLD),
-        )])
+        Line::from(box_title_label("[/] Filter Input", search_focused))
     };
 
     let search_box = input_block(search_focused, has_err, is_valid)
@@ -195,7 +161,9 @@ fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
         let mut spans = vec![
             Span::styled(
                 "> ",
-                Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(COLOR_FOCUS)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 &app.search_query,
@@ -203,7 +171,7 @@ fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
                     .fg(COLOR_TEXT_PRIMARY)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("█", Style::default().fg(COLOR_CYAN)),
+            Span::styled("█", Style::default().fg(COLOR_FOCUS)),
         ];
         if let Some(s) = &suggestion {
             spans.push(Span::styled(&s.ghost_suffix, style_ghost_text()));
@@ -219,7 +187,7 @@ fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
         ])
     } else {
         Line::from(vec![
-            Span::styled("> ", Style::default().fg(COLOR_GREEN)),
+            Span::styled("> ", Style::default().fg(COLOR_TEXT_MUTED)),
             Span::styled(
                 &app.search_query,
                 Style::default()
@@ -241,23 +209,13 @@ fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
     let cat_block = card_block(cat_border_col)
         .padding(ratatui::widgets::Padding::new(1, 1, 0, 0))
         .title(
-            Line::from(Span::styled(
+            Line::from(box_title_label(
                 if cats_focused {
-                    " ◆ Categories [←/→ or Space] (Focused) "
+                    "Categories [<-/->/Space]"
                 } else {
-                    " Categories [c] "
+                    "Categories [c]"
                 },
-                Style::default()
-                    .fg(if cats_focused {
-                        COLOR_CYAN
-                    } else {
-                        COLOR_TEXT_MUTED
-                    })
-                    .add_modifier(if cats_focused {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
+                cats_focused,
             ))
             .alignment(Alignment::Right),
         );
@@ -273,7 +231,16 @@ fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
         };
 
         if is_selected {
-            category_spans.push(pill_solid(cat, COLOR_CYAN));
+            category_spans.push(Span::styled(
+                format!(" [{}] ", cat),
+                Style::default()
+                    .fg(if cats_focused {
+                        COLOR_FOCUS
+                    } else {
+                        COLOR_TEXT_PRIMARY
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ));
         } else {
             category_spans.push(Span::styled(
                 format!(" {} ", cat),
@@ -288,38 +255,66 @@ fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
     // 2. Mods Table (or Empty Filter Notice)
     let filtered = app.filtered_mods();
     if filtered.is_empty() {
-        let empty_lines = vec![
-            Line::from(""),
-            Line::from(vec![
-                pill("! NO MATCHING PACKAGES", COLOR_AMBER, COLOR_AMBER_BG, true),
-                Span::raw("  "),
-                Span::styled(
-                    format!(
-                        "No mods matched query '{}' in category '{}'.",
-                        if app.search_query.is_empty() {
-                            "*"
-                        } else {
-                            &app.search_query
-                        },
-                        app.category_filter.as_deref().unwrap_or("All")
-                    ),
+        let empty_lines = if app.mods.is_empty() {
+            vec![
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "No packages installed in this workspace yet.",
                     Style::default()
                         .fg(COLOR_TEXT_PRIMARY)
                         .add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("Press ", Style::default().fg(COLOR_TEXT_SECONDARY)),
-                keycap("Esc"),
-                Span::styled(" or ", Style::default().fg(COLOR_TEXT_SECONDARY)),
-                keycap("Ctrl+L"),
-                Span::styled(
-                    " to clear search and category filters.",
-                    Style::default().fg(COLOR_TEXT_SECONDARY),
-                ),
-            ]),
-        ];
+                )]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Press ", Style::default().fg(COLOR_TEXT_SECONDARY)),
+                    keycap("4"),
+                    Span::styled(
+                        " to open Downloads, or type a package URL / path in ",
+                        Style::default().fg(COLOR_TEXT_SECONDARY),
+                    ),
+                    keycap("/"),
+                    Span::styled(" Quick Command.", Style::default().fg(COLOR_TEXT_SECONDARY)),
+                ]),
+            ]
+        } else {
+            vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(
+                        "! NO MATCHING PACKAGES",
+                        Style::default()
+                            .fg(COLOR_AMBER)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  "),
+                    Span::styled(
+                        format!(
+                            "No mods matched query '{}' in category '{}'.",
+                            if app.search_query.is_empty() {
+                                "*"
+                            } else {
+                                &app.search_query
+                            },
+                            app.category_filter.as_deref().unwrap_or("All")
+                        ),
+                        Style::default()
+                            .fg(COLOR_TEXT_PRIMARY)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Press ", Style::default().fg(COLOR_TEXT_SECONDARY)),
+                    keycap("Esc"),
+                    Span::styled(" or ", Style::default().fg(COLOR_TEXT_SECONDARY)),
+                    keycap("Ctrl+L"),
+                    Span::styled(
+                        " to clear search and category filters.",
+                        Style::default().fg(COLOR_TEXT_SECONDARY),
+                    ),
+                ]),
+            ]
+        };
         f.render_widget(
             Paragraph::new(empty_lines).alignment(Alignment::Center),
             vertical_layout[1],
@@ -340,68 +335,88 @@ fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
         .height(1);
 
         let rows = filtered.iter().enumerate().map(|(ui_idx, (_, mod_item))| {
-            let is_selected = ui_idx == app.cursor_index;
+            let is_selected = table_focused && ui_idx == app.cursor_index;
 
-            let cursor_bar = if is_selected {
-                Span::styled(
-                    if table_focused { "┃ " } else { "▎ " },
-                    Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD),
-                )
-            } else {
-                Span::raw("  ")
-            };
-
-            let status_badge = if mod_item.active {
-                Span::styled(
-                    "● on ",
-                    Style::default()
-                        .fg(COLOR_GREEN)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else {
-                Span::styled("○ off", Style::default().fg(COLOR_TEXT_MUTED))
-            };
-
-            let idx_str = format!("#{:02}", ui_idx + 1);
-            let idx_span = Span::styled(
-                idx_str,
+            let (cursor_bar, status_badge, idx_span, name_spans, cat_span, prio_span, ver_span) =
                 if is_selected {
-                    Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD)
+                    let sel_bold = style_selected_row();
+                    let sel_dim = style_selected_row_secondary();
+
+                    let cursor = Span::styled("> ", sel_bold);
+                    let status = if mod_item.active {
+                        Span::styled("[x] on ", sel_bold)
+                    } else {
+                        Span::styled("[ ] off", sel_dim)
+                    };
+                    let idx = Span::styled(format!("#{:02}", ui_idx + 1), sel_bold);
+                    let mut name_spans = vec![Span::styled(&mod_item.name, sel_bold)];
+                    if mod_item.has_conflict {
+                        name_spans.push(Span::raw("  "));
+                        name_spans.push(Span::styled(
+                            "! CONFLICT",
+                            Style::default()
+                                .bg(COLOR_RED)
+                                .fg(Color::Black)
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                    }
+                    let cat = Span::styled(&mod_item.category, sel_dim);
+                    let prio = Span::styled(priority_label(mod_item.priority), sel_dim);
+                    let ver = Span::styled(format!("v{}", mod_item.version), sel_dim);
+                    (cursor, status, idx, name_spans, cat, prio, ver)
                 } else {
-                    Style::default().fg(COLOR_TEXT_MUTED)
-                },
-            );
+                    let cursor_bar = Span::raw("  ");
+                    let status_badge = if mod_item.active {
+                        Span::styled(
+                            "[x] on ",
+                            Style::default()
+                                .fg(COLOR_TEXT_PRIMARY)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        Span::styled("[ ] off", Style::default().fg(COLOR_TEXT_MUTED))
+                    };
+                    let idx_str = format!("#{:02}", ui_idx + 1);
+                    let idx_span = Span::styled(idx_str, Style::default().fg(COLOR_TEXT_MUTED));
+                    let name_style = if mod_item.active {
+                        Style::default().fg(COLOR_TEXT_PRIMARY)
+                    } else {
+                        Style::default().fg(COLOR_TEXT_MUTED)
+                    };
+                    let mut name_spans = vec![Span::styled(&mod_item.name, name_style)];
+                    if mod_item.has_conflict {
+                        name_spans.push(Span::raw("  "));
+                        name_spans.push(Span::styled(
+                            "! CONFLICT",
+                            Style::default()
+                                .fg(COLOR_AMBER)
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                    }
+                    let cat_span = Span::styled(
+                        &mod_item.category,
+                        Style::default().fg(COLOR_TEXT_SECONDARY),
+                    );
+                    let prio_span = Span::styled(
+                        priority_label(mod_item.priority),
+                        Style::default().fg(COLOR_TEXT_SECONDARY),
+                    );
+                    let ver_span = Span::styled(
+                        format!("v{}", mod_item.version),
+                        Style::default().fg(COLOR_TEXT_MUTED),
+                    );
+                    (
+                        cursor_bar,
+                        status_badge,
+                        idx_span,
+                        name_spans,
+                        cat_span,
+                        prio_span,
+                        ver_span,
+                    )
+                };
 
-            let name_style = if is_selected {
-                Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD)
-            } else if mod_item.active {
-                Style::default().fg(COLOR_TEXT_PRIMARY)
-            } else {
-                Style::default().fg(COLOR_TEXT_MUTED)
-            };
-
-            let mut name_spans = vec![Span::styled(&mod_item.name, name_style)];
-            if mod_item.has_conflict {
-                name_spans.push(Span::raw("  "));
-                name_spans.push(pill("! CONFLICT", COLOR_AMBER, COLOR_AMBER_BG, true));
-            }
-
-            let cat_span = pill(
-                &mod_item.category,
-                COLOR_TEXT_SECONDARY,
-                COLOR_KEYCAP_BG,
-                false,
-            );
-
-            let (prio_label, prio_fg, prio_bg) = priority_badge_meta(mod_item.priority);
-            let prio_span = pill(prio_label, prio_fg, prio_bg, true);
-
-            let ver_span = Span::styled(
-                format!("v{}", mod_item.version),
-                Style::default().fg(COLOR_TEXT_SECONDARY),
-            );
-
-            Row::new(vec![
+            let mut row = Row::new(vec![
                 Cell::from(Line::from(vec![cursor_bar, status_badge])),
                 Cell::from(Line::from(idx_span)),
                 Cell::from(Line::from(name_spans)),
@@ -409,7 +424,13 @@ fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
                 Cell::from(Line::from(prio_span)),
                 Cell::from(Line::from(ver_span)),
             ])
-            .height(1)
+            .height(1);
+
+            if is_selected {
+                row = row.style(style_selected_row());
+            }
+
+            row
         });
 
         let widths = [
@@ -441,7 +462,12 @@ fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
 
     let selected_id = app.selected_mod().map(|m| m.id.as_str());
     let mut stack_spans = vec![
-        pill("VFS LOWERDIR", COLOR_CYAN, COLOR_CYAN_BG, true),
+        Span::styled(
+            "LOWERDIR",
+            Style::default()
+                .fg(COLOR_TEXT_MUTED)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("  "),
     ];
 
@@ -450,7 +476,9 @@ fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
         if is_focused_layer {
             stack_spans.push(Span::styled(
                 &layer.id,
-                Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(COLOR_FOCUS)
+                    .add_modifier(Modifier::BOLD),
             ));
         } else {
             stack_spans.push(Span::styled(
@@ -459,13 +487,13 @@ fn render_table_pane(f: &mut Frame, app: &App, area: Rect) {
             ));
         }
         if idx + 1 < active_layers.len() {
-            stack_spans.push(Span::styled(" ▸ ", Style::default().fg(COLOR_TEXT_MUTED)));
+            stack_spans.push(Span::styled(" -> ", Style::default().fg(COLOR_TEXT_MUTED)));
         }
     }
-    stack_spans.push(Span::styled(" ▸ ", Style::default().fg(COLOR_TEXT_MUTED)));
+    stack_spans.push(Span::styled(" -> ", Style::default().fg(COLOR_TEXT_MUTED)));
     stack_spans.push(Span::styled(
         "base_game (ro)",
-        Style::default().fg(COLOR_GREEN),
+        Style::default().fg(COLOR_TEXT_MUTED),
     ));
 
     f.render_widget(Paragraph::new(Line::from(stack_spans)), vertical_layout[3]);
@@ -479,45 +507,34 @@ fn render_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
         COLOR_BORDER_NORMAL
     };
 
-    let right_title = if inspector_focused {
-        Line::from(vec![
-            pill_solid("FOCUS: INSPECTOR", COLOR_CYAN),
-            Span::styled(" [i] Hide ", Style::default().fg(COLOR_TEXT_MUTED)),
-        ])
-    } else {
-        Line::from(Span::styled(
-            " [Tab] Focus · [i] Hide ",
-            Style::default().fg(COLOR_TEXT_MUTED),
-        ))
-    };
-
     let block = card_block(border_color)
         .title(
-            Line::from(Span::styled(
-                " ◆ Package Inspector ",
-                Style::default()
-                    .fg(if inspector_focused {
-                        COLOR_CYAN
-                    } else {
-                        COLOR_TEXT_PRIMARY
-                    })
-                    .add_modifier(Modifier::BOLD),
-            ))
-            .alignment(Alignment::Left),
+            Line::from(box_title_label("Package Inspector", inspector_focused))
+                .alignment(Alignment::Left),
         )
-        .title(right_title.alignment(Alignment::Right));
+        .title(
+            Line::from(Span::styled(
+                " [i] Hide ",
+                style_block_right_label(inspector_focused),
+            ))
+            .alignment(Alignment::Right),
+        );
 
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     if let Some(selected) = app.selected_mod() {
-        let (prio_label, prio_fg, prio_bg) = priority_badge_meta(selected.priority);
         let rule_str = "─".repeat(inner.width as usize);
 
         let status_pill = if selected.active {
-            pill("● ACTIVE LAYER", COLOR_GREEN, COLOR_GREEN_BG, true)
+            Span::styled(
+                "[x] Active Layer",
+                Style::default()
+                    .fg(COLOR_TEXT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
-            pill("○ DISABLED", COLOR_TEXT_MUTED, COLOR_KEYCAP_BG, false)
+            Span::styled("[ ] Disabled", Style::default().fg(COLOR_TEXT_MUTED))
         };
 
         let mut lines = vec![
@@ -530,15 +547,16 @@ fn render_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
             Line::from(""),
             Line::from(vec![
                 status_pill,
-                Span::raw(" "),
-                pill(
+                Span::raw("  "),
+                Span::styled(
                     format!("v{}", selected.version),
-                    COLOR_TEXT_PRIMARY,
-                    COLOR_KEYCAP_BG,
-                    true,
+                    Style::default().fg(COLOR_TEXT_MUTED),
                 ),
-                Span::raw(" "),
-                pill(prio_label, prio_fg, prio_bg, true),
+                Span::raw("  "),
+                Span::styled(
+                    priority_label(selected.priority),
+                    Style::default().fg(COLOR_TEXT_SECONDARY),
+                ),
             ]),
             Line::from(""),
             Line::from(Span::styled(
@@ -561,7 +579,9 @@ fn render_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled("Package ID  ", Style::default().fg(COLOR_TEXT_MUTED)),
                 Span::styled(
                     &selected.id,
-                    Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(COLOR_TEXT_PRIMARY)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
@@ -589,8 +609,13 @@ fn render_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
         if selected.has_conflict {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                pill("! VFI COLLISION", COLOR_AMBER, COLOR_AMBER_BG, true),
-                Span::styled(" Press [2] to inspect", Style::default().fg(COLOR_AMBER)),
+                Span::styled(
+                    "! VFI COLLISION",
+                    Style::default()
+                        .fg(COLOR_AMBER)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  Press [3] to resolve", Style::default().fg(COLOR_AMBER)),
             ]));
         }
 
@@ -627,15 +652,17 @@ fn render_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
 
             let mut file_spans = vec![
                 Span::styled(
-                    if is_file_selected { "▸ " } else { connector },
-                    Style::default().fg(COLOR_CYAN),
+                    if is_file_selected { "> " } else { connector },
+                    if is_file_selected {
+                        style_selected_row()
+                    } else {
+                        Style::default().fg(COLOR_TEXT_MUTED)
+                    },
                 ),
                 Span::styled(
                     path,
                     if is_file_selected {
-                        Style::default()
-                            .fg(COLOR_CYAN)
-                            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                        style_selected_row()
                     } else {
                         Style::default().fg(COLOR_TEXT_PRIMARY)
                     },
@@ -643,7 +670,16 @@ fn render_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
             ];
             if is_override {
                 file_spans.push(Span::raw(" "));
-                file_spans.push(pill("OVERRIDE", COLOR_AMBER, COLOR_AMBER_BG, true));
+                file_spans.push(Span::styled(
+                    "[OVERRIDE]",
+                    if is_file_selected {
+                        style_selected_row_secondary()
+                    } else {
+                        Style::default()
+                            .fg(COLOR_AMBER)
+                            .add_modifier(Modifier::BOLD)
+                    },
+                ));
             }
             lines.push(Line::from(file_spans));
         }

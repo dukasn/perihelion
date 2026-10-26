@@ -10,10 +10,9 @@ use crate::{
     action::{InputValidation, ProfilesFocus},
     app::App,
     theme::{
-        card_block, input_block, panel_block, pill, pill_solid, style_ghost_text,
-        style_placeholder, COLOR_AMBER, COLOR_AMBER_BG, COLOR_BLUE, COLOR_BLUE_BG,
-        COLOR_BORDER_FOCUSED, COLOR_BORDER_NORMAL, COLOR_CYAN, COLOR_CYAN_BG, COLOR_GREEN,
-        COLOR_GREEN_BG, COLOR_INDIGO, COLOR_INDIGO_BG, COLOR_KEYCAP_BG, COLOR_RED, COLOR_RED_BG,
+        box_title_label, card_block, input_block, panel_block, style_block_right_label,
+        style_ghost_text, style_placeholder, style_selected_row, style_selected_row_secondary,
+        COLOR_AMBER, COLOR_BORDER_FOCUSED, COLOR_BORDER_NORMAL, COLOR_FOCUS, COLOR_RED,
         COLOR_SEPARATOR, COLOR_TEXT_MUTED, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
     },
 };
@@ -33,30 +32,13 @@ pub fn render_profiles_view(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_profiles_list_pane(f: &mut Frame, app: &App, area: Rect) {
-    let left_focused = matches!(
-        app.profiles_focus,
-        ProfilesFocus::NewProfileInput | ProfilesFocus::GameSelector | ProfilesFocus::ProfileList
-    );
-
-    let focus_tag = match app.profiles_focus {
-        ProfilesFocus::NewProfileInput => pill_solid("FOCUS: NEW PROFILE", COLOR_CYAN),
-        ProfilesFocus::GameSelector => pill_solid("FOCUS: TARGET GAME", COLOR_CYAN),
-        ProfilesFocus::ProfileList => pill_solid("FOCUS: PROFILES LIST", COLOR_CYAN),
-        ProfilesFocus::Inspector => {
-            Span::styled(" [Tab] Focus List ", Style::default().fg(COLOR_TEXT_MUTED))
-        }
-    };
-
-    let main_block = panel_block(left_focused)
+    let list_focused = app.profiles_focus == ProfilesFocus::ProfileList;
+    let main_block = panel_block(false)
         .title(
             Line::from(Span::styled(
-                " ◆ Multi-Game Workspaces (Prototype Preview) ",
+                " Multi-Game Workspaces ",
                 Style::default()
-                    .fg(if left_focused {
-                        COLOR_CYAN
-                    } else {
-                        COLOR_TEXT_SECONDARY
-                    })
+                    .fg(COLOR_TEXT_PRIMARY)
                     .add_modifier(Modifier::BOLD),
             ))
             .alignment(Alignment::Left),
@@ -65,12 +47,8 @@ fn render_profiles_list_pane(f: &mut Frame, app: &App, area: Rect) {
             Line::from(vec![
                 Span::styled(
                     format!(" {} Profiles ", app.profiles.len()),
-                    Style::default()
-                        .fg(COLOR_GREEN)
-                        .add_modifier(Modifier::BOLD),
+                    style_block_right_label(list_focused),
                 ),
-                Span::styled("│ ", Style::default().fg(COLOR_TEXT_MUTED)),
-                focus_tag,
                 Span::raw(" "),
             ])
             .alignment(Alignment::Right),
@@ -106,20 +84,27 @@ fn render_profiles_list_pane(f: &mut Frame, app: &App, area: Rect) {
     let badge = match &validation {
         InputValidation::Idle => {
             if app.profile_input_active {
-                pill_solid("EDITING", COLOR_CYAN)
+                Span::styled("[Esc] Done", style_block_right_label(true))
             } else if input_focused {
-                pill_solid("ENTER TO EDIT", COLOR_CYAN)
+                Span::styled("[Enter] to edit", style_block_right_label(true))
             } else {
-                pill("[n] New", COLOR_TEXT_MUTED, COLOR_KEYCAP_BG, false)
+                Span::styled("[n] New", style_block_right_label(false))
             }
         }
-        InputValidation::Valid(msg) => {
-            pill(format!("+ {}", msg), COLOR_GREEN, COLOR_GREEN_BG, true)
-        }
-        InputValidation::Warning(msg) => {
-            pill(format!("! {}", msg), COLOR_AMBER, COLOR_AMBER_BG, true)
-        }
-        InputValidation::Invalid(msg) => pill(format!("x {}", msg), COLOR_RED, COLOR_RED_BG, true),
+        InputValidation::Valid(msg) => Span::styled(
+            format!("[OK] {}", msg),
+            style_block_right_label(input_focused),
+        ),
+        InputValidation::Warning(msg) => Span::styled(
+            format!("! {}", msg),
+            Style::default()
+                .fg(COLOR_AMBER)
+                .add_modifier(Modifier::BOLD),
+        ),
+        InputValidation::Invalid(msg) => Span::styled(
+            format!("[X] {}", msg),
+            Style::default().fg(COLOR_RED).add_modifier(Modifier::BOLD),
+        ),
     };
 
     let suggestion = if app.profile_input_active {
@@ -130,34 +115,22 @@ fn render_profiles_list_pane(f: &mut Frame, app: &App, area: Rect) {
 
     let title_line = if let Some(s) = &suggestion {
         Line::from(vec![
+            box_title_label("+ New Profile Name", input_focused),
+            Span::raw(" "),
             Span::styled(
-                " + New Profile Name ",
-                Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD),
-            ),
-            pill(
-                format!("Tab/→ Complete: {}", s.completed_text),
-                COLOR_CYAN,
-                COLOR_KEYCAP_BG,
-                true,
+                format!("Tab/-> Complete: {}", s.completed_text),
+                Style::default().fg(COLOR_TEXT_MUTED),
             ),
             Span::raw(" "),
         ])
     } else {
-        Line::from(Span::styled(
+        Line::from(box_title_label(
             if app.profile_input_active {
-                " + New Profile Name (Editing) "
+                "+ New Profile Name (Editing)"
             } else {
-                " + New Profile Name [n] "
+                "+ New Profile Name [n]"
             },
-            Style::default()
-                .fg(if has_error {
-                    COLOR_RED
-                } else if input_focused {
-                    COLOR_CYAN
-                } else {
-                    COLOR_TEXT_SECONDARY
-                })
-                .add_modifier(Modifier::BOLD),
+            input_focused,
         ))
     };
 
@@ -172,7 +145,9 @@ fn render_profiles_list_pane(f: &mut Frame, app: &App, area: Rect) {
         let mut spans = vec![
             Span::styled(
                 "> ",
-                Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(COLOR_FOCUS)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 &app.profile_input,
@@ -184,7 +159,7 @@ fn render_profiles_list_pane(f: &mut Frame, app: &App, area: Rect) {
                     })
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("█", Style::default().fg(COLOR_CYAN)),
+            Span::styled("█", Style::default().fg(COLOR_FOCUS)),
         ];
         if let Some(s) = &suggestion {
             spans.push(Span::styled(&s.ghost_suffix, style_ghost_text()));
@@ -211,23 +186,13 @@ fn render_profiles_list_pane(f: &mut Frame, app: &App, area: Rect) {
     let game_box = card_block(game_box_border)
         .padding(ratatui::widgets::Padding::new(1, 1, 0, 0))
         .title(
-            Line::from(Span::styled(
+            Line::from(box_title_label(
                 if game_sel_focused {
-                    " ◆ Target Game [←/→ or t] (Focused) "
+                    "Target Game [<-/-> or t]"
                 } else {
-                    " Target Game [t] "
+                    "Target Game [t]"
                 },
-                Style::default()
-                    .fg(if game_sel_focused {
-                        COLOR_CYAN
-                    } else {
-                        COLOR_TEXT_MUTED
-                    })
-                    .add_modifier(if game_sel_focused {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
+                game_sel_focused,
             ))
             .alignment(Alignment::Right),
         );
@@ -237,11 +202,24 @@ fn render_profiles_list_pane(f: &mut Frame, app: &App, area: Rect) {
     if let Some(target_game) = app.game_catalog.get(app.new_profile_game_idx) {
         let game_line = Line::from(vec![
             Span::styled("< ", Style::default().fg(COLOR_TEXT_MUTED)),
-            pill_solid(&target_game.short_name, COLOR_CYAN),
+            Span::styled(
+                &target_game.short_name,
+                Style::default()
+                    .fg(if game_sel_focused {
+                        COLOR_FOCUS
+                    } else {
+                        COLOR_TEXT_PRIMARY
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" > ", Style::default().fg(COLOR_TEXT_MUTED)),
             Span::styled(
-                format!("AppID {}", target_game.steam_app_id),
-                Style::default().fg(COLOR_TEXT_SECONDARY),
+                if target_game.steam_app_id > 0 {
+                    format!("AppID {}", target_game.steam_app_id)
+                } else {
+                    "Native / Custom".to_string()
+                },
+                Style::default().fg(COLOR_TEXT_MUTED),
             ),
         ]);
         f.render_widget(
@@ -259,92 +237,152 @@ fn render_profiles_list_pane(f: &mut Frame, app: &App, area: Rect) {
     // 2. Profiles List
     let list_focused =
         !app.profile_input_active && app.profiles_focus == ProfilesFocus::ProfileList;
-    let profile_constraints = vec![Constraint::Length(4); app.profiles.len()];
-    let prof_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(profile_constraints)
-        .split(chunks[2]);
 
-    for (idx, profile) in app.profiles.iter().enumerate() {
-        if idx >= prof_layout.len() {
-            break;
-        }
-
-        let is_selected = idx == app.profile_cursor;
-        let border_color = if is_selected && list_focused {
-            COLOR_BORDER_FOCUSED
-        } else if profile.is_active {
-            COLOR_GREEN
-        } else {
-            COLOR_BORDER_NORMAL
-        };
-
-        let block = card_block(border_color);
-        let p_inner = block.inner(prof_layout[idx]);
-        f.render_widget(block, prof_layout[idx]);
-
-        let state_tag = if profile.is_active {
-            pill_solid("● ACTIVE", COLOR_GREEN)
-        } else if is_selected {
-            pill(">> [ENTER] ACTIVATE", COLOR_CYAN, COLOR_CYAN_BG, true)
-        } else {
-            pill("○ STANDBY", COLOR_TEXT_MUTED, COLOR_KEYCAP_BG, false)
-        };
-
-        let cursor_prefix = if is_selected {
-            Span::styled(
-                if list_focused { "┃ " } else { "▎ " },
-                Style::default().fg(COLOR_CYAN),
-            )
-        } else {
-            Span::raw("  ")
-        };
-
-        let game_badge_color = match profile.game_id.as_str() {
-            "skyrim_se" => COLOR_BLUE,
-            "cyberpunk_2077" => COLOR_AMBER,
-            "starfield" => COLOR_CYAN,
-            _ => COLOR_INDIGO,
-        };
-
-        let lines = vec![
+    if app.profiles.is_empty() {
+        let empty_p = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "No game profiles configured yet.",
+                Style::default()
+                    .fg(COLOR_TEXT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(""),
             Line::from(vec![
-                cursor_prefix,
-                state_tag,
-                Span::raw(" "),
-                pill(&profile.game_short, game_badge_color, COLOR_BLUE_BG, true),
-                Span::raw(" "),
                 Span::styled(
-                    &profile.name,
+                    "Type a profile name above, select target game with ",
+                    Style::default().fg(COLOR_TEXT_SECONDARY),
+                ),
+                Span::styled(
+                    "[< / >]",
                     Style::default()
-                        .fg(if is_selected {
-                            COLOR_CYAN
-                        } else {
-                            COLOR_TEXT_PRIMARY
-                        })
+                        .fg(COLOR_FOCUS)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw("  "),
-                pill(
-                    format!("{} pkgs", profile.mod_count),
-                    COLOR_TEXT_SECONDARY,
-                    COLOR_KEYCAP_BG,
-                    false,
+                Span::styled(", and press ", Style::default().fg(COLOR_TEXT_SECONDARY)),
+                Span::styled(
+                    "[Enter]",
+                    Style::default()
+                        .fg(COLOR_FOCUS)
+                        .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(" "),
-                pill(
-                    &profile.proton_version,
-                    COLOR_INDIGO,
-                    COLOR_INDIGO_BG,
-                    false,
-                ),
+                Span::styled(" to create one.", Style::default().fg(COLOR_TEXT_SECONDARY)),
             ]),
-            Line::from(vec![
-                Span::raw("  "),
-                Span::styled(&profile.desc, Style::default().fg(COLOR_TEXT_SECONDARY)),
-            ]),
-        ];
-        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), p_inner);
+        ])
+        .wrap(Wrap { trim: false });
+        f.render_widget(empty_p, chunks[2]);
+    } else {
+        let profile_constraints = vec![Constraint::Length(4); app.profiles.len()];
+        let prof_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(profile_constraints)
+            .split(chunks[2]);
+
+        for (idx, profile) in app.profiles.iter().enumerate() {
+            if idx >= prof_layout.len() {
+                break;
+            }
+
+            let is_selected = idx == app.profile_cursor;
+            let is_focused_card = is_selected && list_focused;
+            let border_color = if is_focused_card {
+                COLOR_BORDER_FOCUSED
+            } else {
+                COLOR_BORDER_NORMAL
+            };
+
+            let block = card_block(border_color);
+            let p_inner = block.inner(prof_layout[idx]);
+            f.render_widget(block, prof_layout[idx]);
+
+            let lines = if is_focused_card {
+                let sel_bold = style_selected_row();
+                let sel_dim = style_selected_row_secondary();
+                let state_str = if profile.is_active {
+                    "[x] Active"
+                } else {
+                    "> [Enter] Activate"
+                };
+                let pkgs_str = format!("{} pkgs", profile.mod_count);
+                let used_len = 2
+                    + state_str.len()
+                    + 2
+                    + profile.game_short.len()
+                    + 2
+                    + profile.name.len()
+                    + 2
+                    + pkgs_str.len()
+                    + 2
+                    + profile.proton_version.len();
+                let trailing_spaces = (p_inner.width as usize).saturating_sub(used_len);
+                let trailing_fill = " ".repeat(trailing_spaces);
+
+                vec![
+                    Line::from(vec![
+                        Span::styled("> ", sel_bold),
+                        Span::styled(state_str, sel_bold),
+                        Span::styled("  ", sel_bold),
+                        Span::styled(&profile.game_short, sel_bold),
+                        Span::styled("  ", sel_bold),
+                        Span::styled(&profile.name, sel_bold),
+                        Span::styled("  ", sel_bold),
+                        Span::styled(pkgs_str, sel_dim),
+                        Span::styled("  ", sel_dim),
+                        Span::styled(&profile.proton_version, sel_dim),
+                        Span::styled(trailing_fill, sel_bold),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(&profile.desc, Style::default().fg(COLOR_TEXT_SECONDARY)),
+                    ]),
+                ]
+            } else {
+                let state_tag = if profile.is_active {
+                    Span::styled(
+                        "[x] Active",
+                        Style::default()
+                            .fg(COLOR_TEXT_PRIMARY)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Span::styled("[ ] Standby", Style::default().fg(COLOR_TEXT_MUTED))
+                };
+
+                vec![
+                    Line::from(vec![
+                        Span::raw("  "),
+                        state_tag,
+                        Span::raw("  "),
+                        Span::styled(
+                            &profile.game_short,
+                            Style::default().fg(COLOR_TEXT_SECONDARY),
+                        ),
+                        Span::raw("  "),
+                        Span::styled(
+                            &profile.name,
+                            Style::default()
+                                .fg(COLOR_TEXT_PRIMARY)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("  "),
+                        Span::styled(
+                            format!("{} pkgs", profile.mod_count),
+                            Style::default().fg(COLOR_TEXT_MUTED),
+                        ),
+                        Span::raw("  "),
+                        Span::styled(
+                            &profile.proton_version,
+                            Style::default().fg(COLOR_TEXT_MUTED),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(&profile.desc, Style::default().fg(COLOR_TEXT_SECONDARY)),
+                    ]),
+                ]
+            };
+            f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), p_inner);
+        }
     }
 }
 
@@ -356,33 +394,21 @@ fn render_profile_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
         COLOR_BORDER_NORMAL
     };
 
-    let right_title = if inspector_focused {
-        Line::from(vec![
-            pill_solid("FOCUS: INSPECTOR", COLOR_CYAN),
-            Span::raw(" "),
-        ])
-    } else {
-        Line::from(Span::styled(
-            " [Tab] Focus Inspector ",
-            Style::default().fg(COLOR_TEXT_MUTED),
-        ))
-    };
-
     let block = card_block(border_col)
         .title(
-            Line::from(Span::styled(
-                " ◆ Target & Profile Inspector (Prototype Model) ",
-                Style::default()
-                    .fg(if inspector_focused {
-                        COLOR_CYAN
-                    } else {
-                        COLOR_TEXT_PRIMARY
-                    })
-                    .add_modifier(Modifier::BOLD),
+            Line::from(box_title_label(
+                "Target & Profile Inspector",
+                inspector_focused,
             ))
             .alignment(Alignment::Left),
         )
-        .title(right_title.alignment(Alignment::Right));
+        .title(
+            Line::from(Span::styled(
+                " [Tab] Focus Inspector ",
+                style_block_right_label(inspector_focused),
+            ))
+            .alignment(Alignment::Right),
+        );
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -391,13 +417,16 @@ fn render_profile_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
         let rule_str = "─".repeat(inner.width as usize);
 
         let status_pill = if prof.is_active {
-            pill_solid("● MOUNTED WORKSPACE", COLOR_GREEN)
+            Span::styled(
+                "[x] Mounted Workspace",
+                Style::default()
+                    .fg(COLOR_TEXT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
-            pill(
-                "○ INACTIVE PROFILE",
-                COLOR_TEXT_MUTED,
-                COLOR_KEYCAP_BG,
-                false,
+            Span::styled(
+                "[ ] Inactive Profile",
+                Style::default().fg(COLOR_TEXT_MUTED),
             )
         };
 
@@ -414,16 +443,18 @@ fn render_profile_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
             ]),
             Line::from(""),
             Line::from(vec![
-                pill(&prof.game_id, COLOR_CYAN, COLOR_CYAN_BG, true),
-                Span::raw(" "),
-                pill(
-                    format!("Steam AppID {}", prof.steam_app_id),
-                    COLOR_BLUE,
-                    COLOR_BLUE_BG,
-                    true,
+                Span::styled(&prof.game_id, Style::default().fg(COLOR_TEXT_SECONDARY)),
+                Span::styled("  |  ", Style::default().fg(COLOR_BORDER_NORMAL)),
+                Span::styled(
+                    if prof.steam_app_id > 0 {
+                        format!("Steam AppID {}", prof.steam_app_id)
+                    } else {
+                        "Native / Custom Game".to_string()
+                    },
+                    Style::default().fg(COLOR_TEXT_MUTED),
                 ),
-                Span::raw(" "),
-                pill(&prof.proton_version, COLOR_INDIGO, COLOR_INDIGO_BG, true),
+                Span::styled("  |  ", Style::default().fg(COLOR_BORDER_NORMAL)),
+                Span::styled(&prof.proton_version, Style::default().fg(COLOR_TEXT_MUTED)),
             ]),
             Line::from(""),
             Line::from(Span::styled(
@@ -450,7 +481,9 @@ fn render_profile_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled("Entry Binary ", Style::default().fg(COLOR_TEXT_MUTED)),
                 Span::styled(
                     &prof.executable,
-                    Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(COLOR_TEXT_PRIMARY)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
@@ -465,7 +498,7 @@ fn render_profile_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled("Isolation    ", Style::default().fg(COLOR_TEXT_MUTED)),
                 Span::styled(
                     "CLONE_NEWNS | CLONE_NEWUSER (Immutable RO Base)",
-                    Style::default().fg(COLOR_GREEN),
+                    Style::default().fg(COLOR_TEXT_SECONDARY),
                 ),
             ]),
             Line::from(""),
@@ -490,17 +523,17 @@ fn render_profile_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
                 "├─ "
             };
             lines.push(Line::from(vec![
-                Span::styled(connector, Style::default().fg(COLOR_CYAN)),
+                Span::styled(connector, Style::default().fg(COLOR_TEXT_MUTED)),
                 Span::styled(
                     format!("{:<8}", format!("{}/*", m.from_prefix)),
                     Style::default()
                         .fg(COLOR_TEXT_PRIMARY)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" ──▸ ", Style::default().fg(COLOR_TEXT_MUTED)),
+                Span::styled(" --> ", Style::default().fg(COLOR_TEXT_MUTED)),
                 Span::styled(
                     format!("{}/*", m.to_prefix),
-                    Style::default().fg(COLOR_GREEN),
+                    Style::default().fg(COLOR_TEXT_SECONDARY),
                 ),
             ]));
         }
@@ -511,7 +544,7 @@ fn render_profile_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(COLOR_SEPARATOR),
         )));
         lines.push(Line::from(Span::styled(
-            "ENVIRONMENT & RUNTIME DIAGNOSTICS (SIMULATED PREVIEW)",
+            "ENVIRONMENT & RUNTIME DIAGNOSTICS",
             Style::default()
                 .fg(COLOR_TEXT_MUTED)
                 .add_modifier(Modifier::BOLD),
@@ -519,22 +552,29 @@ fn render_profile_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(""));
 
         let diag = &prof.diagnostic;
-        let (diag_fg, diag_bg) = if diag.resolved {
-            (COLOR_GREEN, COLOR_GREEN_BG)
-        } else {
-            (COLOR_AMBER, COLOR_AMBER_BG)
-        };
 
         let action_badge = if diag.resolved {
-            pill(&diag.action_text, COLOR_GREEN, COLOR_GREEN_BG, true)
+            Span::styled("[OK] Resolved", Style::default().fg(COLOR_TEXT_MUTED))
         } else if inspector_focused {
-            pill_solid(">> [Enter / f] Apply Fix", COLOR_CYAN)
+            Span::styled(
+                "> [Enter / f] Apply Fix",
+                Style::default()
+                    .fg(COLOR_FOCUS)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
-            pill(&diag.action_text, COLOR_CYAN, COLOR_CYAN_BG, true)
+            Span::styled(&diag.action_text, Style::default().fg(COLOR_TEXT_SECONDARY))
         };
 
         lines.push(Line::from(vec![
-            pill(&diag.level, diag_fg, diag_bg, true),
+            Span::styled(
+                format!("! {}", diag.level),
+                Style::default().fg(if diag.resolved {
+                    COLOR_TEXT_MUTED
+                } else {
+                    COLOR_AMBER
+                }),
+            ),
             Span::raw(" "),
             Span::styled(
                 &diag.title,
@@ -547,9 +587,31 @@ fn render_profile_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
             &diag.message,
             Style::default().fg(COLOR_TEXT_SECONDARY),
         )));
-        lines.push(Line::from(vec![Span::raw("Action: "), action_badge]));
+        lines.push(Line::from(vec![
+            Span::styled("Action: ", Style::default().fg(COLOR_TEXT_MUTED)),
+            action_badge,
+        ]));
 
         let p = Paragraph::new(lines).wrap(Wrap { trim: false });
         f.render_widget(p, inner);
+    } else {
+        let empty_lines = vec![
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "No profile selected",
+                Style::default()
+                    .fg(COLOR_TEXT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "Select or create a game profile to inspect environment layout and runtime diagnostics.",
+                Style::default().fg(COLOR_TEXT_SECONDARY),
+            )]),
+        ];
+        f.render_widget(
+            Paragraph::new(empty_lines).wrap(Wrap { trim: false }),
+            inner,
+        );
     }
 }

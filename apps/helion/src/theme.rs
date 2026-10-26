@@ -2,7 +2,7 @@
 
 use ratatui::{
     style::{Color, Modifier, Style},
-    text::Span,
+    text::{Line, Span},
     widgets::{Block, BorderType, Borders, Padding},
 };
 
@@ -25,20 +25,22 @@ pub const COLOR_INPUT_VALID_BG: Color = Color::Black;
 // Borders & Dividers (mapped to terminal ANSI colors)
 pub const COLOR_BORDER_SUBTLE: Color = Color::DarkGray;
 pub const COLOR_BORDER_NORMAL: Color = Color::DarkGray;
-pub const COLOR_BORDER_FOCUSED: Color = Color::Cyan;
+pub const COLOR_BORDER_FOCUSED: Color = Color::LightBlue;
 pub const COLOR_SEPARATOR: Color = Color::DarkGray;
 
-// Semantic Accents (terminal ANSI palette)
-pub const COLOR_CYAN: Color = Color::Cyan;
+// Focus & Selection Highlight: strictly Light Blue for focused elements only
+pub const COLOR_FOCUS: Color = Color::LightBlue;
+pub const COLOR_CYAN: Color = Color::LightBlue;
 pub const COLOR_CYAN_BG: Color = Color::Black;
 
-// ANSI Blue (4) is notoriously low-contrast on dark terminals; LightBlue (12) reads cleanly.
-pub const COLOR_BLUE: Color = Color::LightBlue;
+// Neutral tones for non-focused elements (dimmed white / gray)
+pub const COLOR_BLUE: Color = Color::Gray;
 pub const COLOR_BLUE_BG: Color = Color::Black;
 
-pub const COLOR_INDIGO: Color = Color::Magenta;
+pub const COLOR_INDIGO: Color = Color::Gray;
 pub const COLOR_INDIGO_BG: Color = Color::Black;
 
+// Functional status indicators (minimal usage only)
 pub const COLOR_GREEN: Color = Color::Green;
 pub const COLOR_GREEN_BG: Color = Color::Black;
 
@@ -48,12 +50,10 @@ pub const COLOR_AMBER_BG: Color = Color::Black;
 pub const COLOR_RED: Color = Color::Red;
 pub const COLOR_RED_BG: Color = Color::Black;
 
-// Typography (adapts to terminal foreground)
-pub const COLOR_TEXT_PRIMARY: Color = Color::Reset;
-// Hierarchy: PRIMARY (fg + bold) > SECONDARY (fg) > MUTED (Gray). DarkGray is reserved
-// for borders/rules only -- it fails contrast for readable text on most dark themes.
-pub const COLOR_TEXT_SECONDARY: Color = Color::Reset;
-pub const COLOR_TEXT_MUTED: Color = Color::Gray;
+// Minimalist Typography: White for primary, Dimmed White (Gray) for secondary, DarkGray for muted
+pub const COLOR_TEXT_PRIMARY: Color = Color::White;
+pub const COLOR_TEXT_SECONDARY: Color = Color::Gray;
+pub const COLOR_TEXT_MUTED: Color = Color::DarkGray;
 pub const COLOR_TEXT_BRACKET: Color = Color::DarkGray;
 
 pub fn style_header_title() -> Style {
@@ -98,12 +98,14 @@ pub fn style_accent_amber() -> Style {
     Style::default().fg(COLOR_AMBER)
 }
 
+#[allow(dead_code)]
 pub fn style_active_tab() -> Style {
     Style::default()
         .fg(COLOR_CYAN)
         .add_modifier(Modifier::BOLD | Modifier::REVERSED)
 }
 
+#[allow(dead_code)]
 pub fn style_inactive_tab() -> Style {
     Style::default().fg(COLOR_TEXT_MUTED)
 }
@@ -118,6 +120,7 @@ pub fn style_border_normal() -> Style {
     Style::default().fg(COLOR_BORDER_NORMAL)
 }
 
+#[allow(dead_code)]
 pub fn style_play_button() -> Style {
     Style::default()
         .fg(COLOR_GREEN)
@@ -151,6 +154,67 @@ pub fn keycap<'a>(key: impl Into<String>) -> Span<'a> {
         key.into(),
         Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD),
     )
+}
+
+/// Selected row / line style across tables, lists, and palettes:
+/// Inverted full highlight background with black text (like focused title labels),
+/// providing unambiguous visual focus across any terminal theme.
+pub fn style_selected_row() -> Style {
+    Style::default()
+        .bg(COLOR_FOCUS)
+        .fg(Color::Black)
+        .add_modifier(Modifier::BOLD)
+}
+
+/// Subtle/secondary elements on a selected row:
+/// Black text on full highlight background.
+pub fn style_selected_row_secondary() -> Style {
+    Style::default().bg(COLOR_FOCUS).fg(Color::Black)
+}
+
+/// Style for right-aligned block title labels (shortcuts, counts, statuses) on fenced blocks:
+/// When active/focused, highlighted text foreground matches the highlighted border/label color (`COLOR_FOCUS`).
+/// When inactive/unfocused, it matches the normal border color (`COLOR_BORDER_NORMAL`).
+/// No background changes are applied (background remains transparent).
+pub fn style_block_right_label(focused: bool) -> Style {
+    if focused {
+        Style::default()
+            .fg(COLOR_FOCUS)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(COLOR_BORDER_NORMAL)
+    }
+}
+
+/// Renders a block title label. When focused, applies an inverted solid background
+/// (using the terminal's theme via `Modifier::REVERSED`) so the active box is immediately recognizable,
+/// eliminating the need for a separate right-side `[FOCUS: ...]` tag.
+pub fn box_title_label<'a>(text: impl Into<String>, focused: bool) -> Span<'a> {
+    box_title_label_colored(text, COLOR_CYAN, focused)
+}
+
+pub fn box_title_label_colored<'a>(
+    text: impl Into<String>,
+    color: Color,
+    focused: bool,
+) -> Span<'a> {
+    let t = text.into();
+    let trimmed = t.trim();
+    if focused {
+        Span::styled(
+            format!(" {} ", trimmed),
+            Style::default()
+                .fg(color)
+                .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+        )
+    } else {
+        Span::styled(
+            format!(" {} ", trimmed),
+            Style::default()
+                .fg(COLOR_TEXT_SECONDARY)
+                .add_modifier(Modifier::BOLD),
+        )
+    }
 }
 
 /// Top-level panel. Focus is communicated by border *color* only; the border *shape*
@@ -197,4 +261,47 @@ pub fn input_block<'a>(active: bool, has_error: bool, is_valid: bool) -> Block<'
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color))
         .padding(Padding::new(1, 1, 0, 0))
+}
+
+pub fn render_segmented_bar(progress: f32, total_cells: usize) -> Line<'static> {
+    let progress = progress.clamp(0.0, 1.0);
+    let filled_count = (progress * total_cells as f32).round() as usize;
+    let empty_count = total_cells.saturating_sub(filled_count);
+
+    let filled_style = Style::default().fg(Color::Rgb(45, 212, 191)); // Teal / Green
+    let empty_style = Style::default().fg(Color::Rgb(55, 65, 81)); // Dim border gray
+
+    Line::from(vec![
+        Span::styled("▮".repeat(filled_count), filled_style),
+        Span::styled("▯".repeat(empty_count), empty_style),
+        Span::styled(
+            format!(" {:>3}%", (progress * 100.0) as u32),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_render_segmented_bar() {
+        let line = render_segmented_bar(0.5, 10);
+        assert_eq!(line.spans.len(), 3);
+        assert_eq!(line.spans[0].content, "▮".repeat(5));
+        assert_eq!(line.spans[1].content, "▯".repeat(5));
+        assert_eq!(line.spans[2].content, "  50%");
+
+        // Test clamped 0% and 100%
+        let zero = render_segmented_bar(-0.1, 8);
+        assert_eq!(zero.spans[0].content, "");
+        assert_eq!(zero.spans[1].content, "▯".repeat(8));
+        assert_eq!(zero.spans[2].content, "   0%");
+
+        let hundred = render_segmented_bar(1.5, 8);
+        assert_eq!(hundred.spans[0].content, "▮".repeat(8));
+        assert_eq!(hundred.spans[1].content, "");
+        assert_eq!(hundred.spans[2].content, " 100%");
+    }
 }

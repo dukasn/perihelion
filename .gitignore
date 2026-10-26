@@ -27,4 +27,8 @@ CLAUDE.md
 .cursorrules
 .cursor/
 
+# Python caches
+__pycache__/
+*.py[cod]
+
 

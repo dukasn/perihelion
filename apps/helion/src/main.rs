@@ -133,6 +133,16 @@ fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) {
             KeyCode::Delete => {
                 app.handle_action(Action::InputClear);
             }
+            KeyCode::Up => {
+                if app.overview_input_active {
+                    app.handle_action(Action::CursorUp);
+                }
+            }
+            KeyCode::Down => {
+                if app.overview_input_active {
+                    app.handle_action(Action::CursorDown);
+                }
+            }
             KeyCode::Char(c) => {
                 app.handle_action(Action::InputChar(c));
             }
@@ -331,8 +341,9 @@ fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) {
 
         // Inspector / Input Shortcuts
         KeyCode::Char('i') => match app.active_tab {
-            Tab::Mods => app.handle_action(Action::ToggleInspector),
-            Tab::Downloads => app.handle_action(Action::StartDownloadInput),
+            Tab::Mods | Tab::Conflicts | Tab::Downloads => {
+                app.handle_action(Action::ToggleInspector)
+            }
             _ => {}
         },
         KeyCode::Char('u') => {

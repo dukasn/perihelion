@@ -1,0 +1,456 @@
+#!/usr/bin/env python3
+"""
+Perihelion GitHub Banner Generator
+====================================
+Procedural WebP repository banner generator with:
+ - Subdued pastel halftone stipple texture (high-contrast for logo & text)
+ - Antialiased rounded corners with alpha transparency
+ - Native stepped pixel double-glyph rendering
+ - Zero NumPy dependency (Standard Python + Pillow only)
+"""
+
+import argparse
+import math
+import os
+import random
+import sys
+from typing import List, Optional, Tuple
+
+try:
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont
+except ImportError:
+    sys.exit(
+        "[!] Pillow is not installed. Install it via:\n"
+        "    pip install pillow\n"
+        "  or on Fedora / Toolbox:\n"
+        "    sudo dnf install -y python3-pillow"
+    )
+
+# ==============================================================================
+# 1. Muted, High-Contrast Color Palettes
+# ==============================================================================
+PALETTES = {
+    "pastel-sage": [
+        (95, 120, 108),   # Muted deep sage
+        (102, 128, 130),  # Soft slate mint
+        (118, 130, 124),  # Low-key titanium
+        (138, 148, 142),  # Subdued bone chalk
+    ],
+    "pastel-cyan": [
+        (75, 125, 145),   # Moody slate cyan
+        (90, 140, 155),   # Muted cyan
+        (110, 155, 168),  # Soft steel ice
+        (135, 170, 180),  # Low-key sky
+    ],
+    "titanium": [
+        (100, 105, 112),
+        (118, 122, 128),
+        (88, 92, 98),
+        (135, 138, 142),
+    ],
+    "mono": [
+        (110, 110, 110),
+        (130, 130, 130),
+        (90, 90, 90),
+        (150, 150, 150),
+    ],
+}
+
+
+# ==============================================================================
+# 2. Native Stepped Pixel Logo Renderer
+# ==============================================================================
+def render_native_logo(width: int, height: int, color=(255, 255, 255, 255)) -> Image.Image:
+    """Renders the Perihelion stepped double-glyph logo on an 8x6 coordinate grid."""
+    u = min(width / 8.0, height / 6.0)
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    ox = (width - 8 * u) / 2.0
+    oy = (height - 6 * u) / 2.0
+
+    blocks = [
+        (2, 0, 1, 1),
+        (1, 1, 3, 1),
+        (0, 2, 3, 1),
+        (1, 3, 1, 1),
+        (2, 4, 2, 1),
+        (3, 5, 1, 1),
+    ]
+
+    for glyph_offset in [0, 4]:
+        for c, r, w, h in blocks:
+            x0 = ox + (c + glyph_offset) * u
+            y0 = oy + r * u
+            x1 = x0 + w * u
+            y1 = y0 + h * u
+            draw.rectangle([x0, y0, x1, y1], fill=color)
+
+    return img
+
+
+def load_logo_image(path_or_auto: str, target_size: Tuple[int, int]) -> Image.Image:
+    """Loads an external logo file with auto-cropping or falls back to native vector."""
+    if path_or_auto.lower() in ("auto", "internal", "native", "none", ""):
+        return render_native_logo(target_size[0], target_size[1])
+
+    if not os.path.exists(path_or_auto):
+        print(f"[!] Logo '{path_or_auto}' not found. Falling back to native vector logo.")
+        return render_native_logo(target_size[0], target_size[1])
+
+    try:
+        raw_img = Image.open(path_or_auto).convert("RGBA")
+        alpha = raw_img.split()[3]
+        bbox = alpha.getbbox()
+        if not bbox:
+            luminance = raw_img.convert("L").point(lambda p: 255 if p > 35 else 0)
+            bbox = luminance.getbbox()
+
+        if bbox:
+            raw_img = raw_img.crop(bbox)
+
+        raw_img.thumbnail(target_size, Image.Resampling.LANCZOS)
+        return raw_img
+    except Exception as e:
+        print(f"[!] Error loading logo file ({e}). Falling back to native vector.")
+        return render_native_logo(target_size[0], target_size[1])
+
+
+# ==============================================================================
+# 3. Procedural Halftone Background Engine (Dimmed & Contrast-Optimized)
+# ==============================================================================
+def generate_halftone_canvas(
+    width: int,
+    height: int,
+    seed: int,
+    grid_step: int = 14,
+    layout: str = "left",
+    palette_name: str = "pastel-sage",
+    brightness_mult: float = 0.42,
+) -> Image.Image:
+    """Renders radius-modulated dot-matrix stippling tuned for high text/logo legibility."""
+    random.seed(seed)
+
+    scale = 2
+    sw, sh = width * scale, height * scale
+    s_step = grid_step * scale
+
+    bg = Image.new("RGBA", (sw, sh), (0, 0, 0, 255))
+    draw = ImageDraw.Draw(bg)
+    colors = PALETTES.get(palette_name, PALETTES["pastel-sage"])
+
+    if layout == "left":
+        centers = [
+            (sw * 0.22, sh * 0.48, sw * 0.40, 1.15),
+            (sw * 0.08, sh * 0.28, sw * 0.32, 0.85),
+            (sw * 0.36, sh * 0.58, sw * 0.35, 0.75),
+            (sw * 0.16, sh * 0.72, sw * 0.28, 0.70),
+        ]
+    elif layout == "center":
+        centers = [
+            (sw * 0.06, sh * 0.20, sw * 0.35, 1.0),
+            (sw * 0.06, sh * 0.80, sw * 0.35, 1.0),
+            (sw * 0.94, sh * 0.20, sw * 0.35, 1.0),
+            (sw * 0.94, sh * 0.80, sw * 0.35, 1.0),
+        ]
+    else:
+        centers = [
+            (sw * 0.25, sh * 0.45, sw * 0.50, 0.95),
+            (sw * 0.75, sh * 0.55, sw * 0.50, 0.80),
+        ]
+
+    xs = list(range(s_step // 2, sw, s_step))
+    ys = list(range(s_step // 2, sh, s_step))
+
+    for y in ys:
+        for x in xs:
+            density = 0.0
+            for cx, cy, rad, wt in centers:
+                d = math.hypot(x - cx, y - cy)
+                if d < rad:
+                    t = d / rad
+                    falloff = 0.5 * (1.0 + math.cos(math.pi * t))
+                    density += falloff * wt
+
+            if layout == "left":
+                right_decay = max(0.0, 1.0 - (x / (sw * 0.68)) ** 1.35)
+                density *= right_decay
+            elif layout == "center":
+                center_dist = abs(x - sw * 0.5) / (sw * 0.5)
+                density *= center_dist ** 1.6
+
+            density += (random.random() - 0.5) * 0.12
+
+            if density > 0.08:
+                r_max = s_step * 0.35
+                r = min(r_max, max(0.8 * scale, (density ** 1.15) * r_max))
+                # Restrained alpha so the white logo and typography stand out cleanly
+                raw_alpha = (density ** 0.9) * 160 * brightness_mult
+                alpha = int(min(145, max(15, raw_alpha)))
+                c = random.choice(colors)
+                draw.ellipse([x - r, y - r, x + r, y + r], fill=(c[0], c[1], c[2], alpha))
+
+    return bg.resize((width, height), Image.Resampling.LANCZOS)
+
+
+# ==============================================================================
+# 4. Antialiased Rounded Corners
+# ==============================================================================
+def apply_rounded_corners(img: Image.Image, radius: int = 28) -> Image.Image:
+    """Applies supersampled rounded corners with clean alpha transparency."""
+    if radius <= 0:
+        return img
+
+    scale = 4
+    w, h = img.size
+    mask = Image.new("L", (w * scale, h * scale), 0)
+    draw_mask = ImageDraw.Draw(mask)
+    draw_mask.rounded_rectangle([(0, 0), (w * scale, h * scale)], radius=radius * scale, fill=255)
+    mask = mask.resize((w, h), Image.Resampling.LANCZOS)
+
+    rounded_img = img.copy().convert("RGBA")
+    existing_alpha = rounded_img.split()[3]
+    final_alpha = Image.composite(existing_alpha, Image.new("L", (w, h), 0), mask)
+    rounded_img.putalpha(final_alpha)
+    return rounded_img
+
+
+# ==============================================================================
+# 5. System Typography
+# ==============================================================================
+def find_system_font(preferred_names: List[str]) -> Optional[str]:
+    search_dirs = [
+        "/usr/share/fonts",
+        "/usr/local/share/fonts",
+        "~/.fonts",
+        "C:\\Windows\\Fonts",
+        "/System/Library/Fonts",
+        "/Library/Fonts",
+    ]
+    found_files = []
+    for d in search_dirs:
+        exp = os.path.expanduser(d)
+        if os.path.exists(exp):
+            for root, _, files in os.walk(exp):
+                for f in files:
+                    if f.endswith((".ttf", ".otf")):
+                        found_files.append(os.path.join(root, f))
+
+    for preferred in preferred_names:
+        for f in found_files:
+            if preferred.lower() in os.path.basename(f).lower():
+                return f
+    return None
+
+
+def get_fonts(headline_size: int, subhead_size: int, meta_size: int):
+    h_font_path = find_system_font(
+        ["NimbusSans-Bold", "NimbusSansNarrow-Bold", "GoogleSans-Bold", "LiberationSans-Bold", "DejaVuSans-Bold", "Arial-Bold", "Helvetica-Bold"]
+    )
+    m_font_path = find_system_font(
+        ["NimbusMonoPS-Regular", "LiberationMono-Regular", "DejaVuSansMono", "Consolas", "Courier"]
+    )
+
+    try:
+        h_font = ImageFont.truetype(h_font_path, headline_size) if h_font_path else ImageFont.load_default()
+    except Exception:
+        h_font = ImageFont.load_default()
+
+    try:
+        s_font = ImageFont.truetype(m_font_path or h_font_path, subhead_size) if (m_font_path or h_font_path) else ImageFont.load_default()
+    except Exception:
+        s_font = ImageFont.load_default()
+
+    try:
+        m_font = ImageFont.truetype(m_font_path, meta_size) if m_font_path else ImageFont.load_default()
+    except Exception:
+        m_font = ImageFont.load_default()
+
+    return h_font, s_font, m_font
+
+
+# ==============================================================================
+# 6. Main Orchestrator
+# ==============================================================================
+def create_banner(
+    output_path: str = "banner.webp",
+    logo_path: str = "auto",
+    headline: str = "PERIHELION",
+    subhead: str = "Mod Fearlessly. Share Instantly.",
+    layout: str = "left",
+    logo_pos: Optional[str] = None,
+    width: int = 1280,
+    height: int = 640,
+    seed: Optional[int] = None,
+    palette: str = "pastel-sage",
+    density: int = 14,
+    dim: float = 0.42,
+    radius: int = 28,
+    tech_marks: bool = True,
+):
+    if seed is None:
+        seed = random.randint(0x1000, 0xFFFF)
+    seed_hex = f"0x{seed:04X}"
+    print(f"[*] Generating Perihelion banner [{width}x{height}] | Seed: {seed_hex} | Radius: {radius}px...")
+
+    # 1. Background
+    banner = generate_halftone_canvas(
+        width=width,
+        height=height,
+        seed=seed,
+        grid_step=density,
+        layout=layout,
+        palette_name=palette,
+        brightness_mult=dim,
+    )
+
+    # 2. Logo Placement & Negative-Space Buffer
+    logo_w, logo_h = (280, 210) if layout == "left" else (220, 165)
+    logo_img = load_logo_image(logo_path, (logo_w, logo_h))
+
+    if logo_pos and "," in logo_pos:
+        lx, ly = map(int, logo_pos.split(","))
+    elif layout == "left":
+        lx = int(width * 0.12)
+        ly = (height - logo_img.height) // 2
+    else:
+        lx = (width - logo_img.width) // 2
+        ly = int(height * 0.18)
+
+    # Negative-space occlusion buffer: creates a subtle dark field directly behind the logo
+    halo = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    h_draw = ImageDraw.Draw(halo)
+    h_draw.rectangle([lx - 30, ly - 30, lx + logo_img.width + 30, ly + logo_img.height + 30], fill=(0, 0, 0, 230))
+    halo = halo.filter(ImageFilter.GaussianBlur(radius=32))
+    banner.alpha_composite(halo)
+
+    # Paste crisp white logo
+    banner.paste(logo_img, (lx, ly), logo_img)
+
+    # 3. Typography
+    draw = ImageDraw.Draw(banner)
+    h_font, s_font, m_font = get_fonts(headline_size=82, subhead_size=23, meta_size=11)
+
+    if layout == "left":
+        tx = int(width * 0.48)
+        ty = int(height * 0.40)
+        draw.text((tx, ty), headline, font=h_font, fill=(255, 255, 255, 255))
+        draw.text((tx + 2, ty + 94), subhead, font=s_font, fill=(200, 205, 212, 230))
+    else:
+        h_bbox = draw.textbbox((0, 0), headline, font=h_font)
+        h_w = h_bbox[2] - h_bbox[0]
+        tx = (width - h_w) // 2
+        ty = ly + logo_img.height + 34
+        draw.text((tx, ty), headline, font=h_font, fill=(255, 255, 255, 255))
+
+        s_bbox = draw.textbbox((0, 0), subhead, font=s_font)
+        s_w = s_bbox[2] - s_bbox[0]
+        sx = (width - s_w) // 2
+        draw.text((sx, ty + 90), subhead, font=s_font, fill=(200, 205, 212, 230))
+
+    # 4. Technical Markings with Concentric Inner Radius
+    if tech_marks:
+        margin = 22
+        inner_rad = max(4, radius - 8) if radius > 0 else 0
+        draw.rounded_rectangle(
+            [margin, margin, width - margin, height - margin],
+            radius=inner_rad,
+            outline=(255, 255, 255, 25),
+            width=1,
+        )
+
+        cross_len = 10
+        coords = [
+            (margin + 18, margin + 18),
+            (width - margin - 18, margin + 18),
+            (margin + 18, height - margin - 18),
+            (width - margin - 18, height - margin - 18),
+        ]
+        for cx, cy in coords:
+            draw.line([cx - cross_len, cy, cx + cross_len, cy], fill=(255, 255, 255, 65), width=1)
+            draw.line([cx, cy - cross_len, cx, cy + cross_len], fill=(255, 255, 255, 65), width=1)
+
+        tl_text = "BUILT FOR LINUX ONLY"
+        tr_text = "GNU GPLv3 · OPEN SOURCE"
+        bl_text = "ZERO DISK DUPLICATION"
+        br_text = "PRISTINE BASE GAME FILES"
+
+        # Top-Left & Bottom-Left (matching 38px left padding)
+        draw.text((margin + 38, margin + 12), tl_text, font=m_font, fill=(255, 255, 255, 80))
+        draw.text((margin + 38, height - margin - 24), bl_text, font=m_font, fill=(255, 255, 255, 75))
+
+        # Dynamic right alignment (matching 38px right padding symmetrically)
+        tr_bbox = draw.textbbox((0, 0), tr_text, font=m_font)
+        tr_w = tr_bbox[2] - tr_bbox[0]
+        br_bbox = draw.textbbox((0, 0), br_text, font=m_font)
+        br_w = br_bbox[2] - br_bbox[0]
+
+        draw.text((width - margin - 38 - tr_w, margin + 12), tr_text, font=m_font, fill=(255, 255, 255, 80))
+        draw.text((width - margin - 38 - br_w, height - margin - 24), br_text, font=m_font, fill=(255, 255, 255, 75))
+
+    # 5. Apply Rounded Corners
+    if radius > 0:
+        banner = apply_rounded_corners(banner, radius=radius)
+
+    # 6. Save in Efficient WebP / PNG / JPG Format
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    ext = os.path.splitext(output_path)[1].lower()
+
+    if ext == ".webp":
+        # High quality WebP with full alpha transparency
+        banner.save(output_path, "WEBP", quality=92, method=6)
+    elif ext in (".jpg", ".jpeg"):
+        rgb_img = Image.new("RGB", banner.size, (0, 0, 0))
+        rgb_img.paste(banner, mask=banner.split()[3])
+        rgb_img.save(output_path, "JPEG", quality=95)
+    else:
+        banner.save(output_path, "PNG", optimize=True)
+
+    print(f"[✓] Banner generated -> {output_path} ({os.path.getsize(output_path) / 1024:.1f} KB)")
+
+
+# ==============================================================================
+# 7. CLI Entry Point
+# ==============================================================================
+def parse_args():
+    parser = argparse.ArgumentParser(description="Procedurally generate GitHub repository banners.")
+    parser.add_argument("--headline", default="PERIHELION", help="Main title text.")
+    parser.add_argument("--subhead", default="Mod Fearlessly. Share Instantly.", help="Subtitle / tagline.")
+    parser.add_argument("--logo", default="auto", help="Path to logo file or 'auto' for native vector.")
+    parser.add_argument("--layout", choices=["left", "center"], default="left", help="Layout alignment.")
+    parser.add_argument("--logo-pos", default=None, help="Explicit X,Y logo anchor override.")
+    parser.add_argument("--width", type=int, default=1280, help="Banner width in px.")
+    parser.add_argument("--height", type=int, default=640, help="Banner height in px.")
+    parser.add_argument(
+        "--seed",
+        type=lambda s: int(s, 16) if s.startswith("0x") else int(s),
+        default=None,
+        help="Halftone seed (e.g. 0x8F3C).",
+    )
+    parser.add_argument("--palette", choices=list(PALETTES.keys()), default="pastel-sage", help="Palette theme.")
+    parser.add_argument("--density", type=int, default=14, help="Grid step pitch in px.")
+    parser.add_argument("--dim", type=float, default=0.42, help="Dot intensity multiplier (lower = dimmer).")
+    parser.add_argument("--radius", type=int, default=28, help="Corner radius in px.")
+    parser.add_argument("--no-tech-marks", action="store_true", help="Omit engineering crosshairs and borders.")
+    parser.add_argument("-o", "--output", default="banner.webp", help="Output file path.")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    create_banner(
+        output_path=args.output,
+        logo_path=args.logo,
+        headline=args.headline,
+        subhead=args.subhead,
+        layout=args.layout,
+        logo_pos=args.logo_pos,
+        width=args.width,
+        height=args.height,
+        seed=args.seed,
+        palette=args.palette,
+        density=args.density,
+        dim=args.dim,
+        radius=args.radius,
+        tech_marks=not args.no_tech_marks,
+    )
