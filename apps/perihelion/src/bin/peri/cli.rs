@@ -14,7 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueHint};
+use helion::cli_styles;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -22,19 +23,17 @@ use std::path::PathBuf;
     name = "peri",
     author = "Eduardo Marques Santos and Perihelion Contributors",
     version,
-    about = "Mod Fearlessly. Share Instantly.",
-    long_about = "Mod Fearlessly. Share Instantly.\n\n\
-                  No 40-step installation guides. No throttled 2 MB/s download caps.\n\
-                  Perihelion turns entire modded setups into lightweight, shareable\n\
-                  blueprints you can sync and play in one command.\n\n\
-                  ENGINEERED DIFFERENTLY (UNDER THE HOOD):\n\
-                  • Kernel OverlayFS: In-memory file composition with zero disk duplication.\n\
-                  • Unprivileged Namespaces: Complete sandbox isolation without root / sudo.\n\
-                  • P2P Swarm Transport: Uncapped multi-gigabyte BitTorrent .peca streaming.\n\
-                  • Deterministic DAG Solver: Conflict-free 3-tier waterfall resolution."
+    about = "Next-generation, game-agnostic native Linux mod manager and VFS orchestrator",
+    long_about = "peri - Game-agnostic native Linux mod manager and VFS orchestrator.\n\n\
+                  Manages mod lists declaratively, resolves dependency graphs, and runs\n\
+                  games inside isolated kernel OverlayFS namespaces without root permissions.",
+    styles = cli_styles(),
+    color = clap::ColorChoice::Auto,
+    arg_required_else_help = true
 )]
 pub struct Cli {
-    #[arg(short, long, global = true, help = "Enable verbose debug logs")]
+    /// Enable verbose debug and tracing logs
+    #[arg(short, long, global = true, help_heading = "Logging")]
     pub verbose: bool,
 
     #[command(subcommand)]
@@ -43,112 +42,206 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    #[command(about = "Initializes a Perihelion workspace mapped to a specific game profile")]
+    /// Initialize a workspace mapped to a target game profile
+    #[command(
+        about = "Initialize a workspace mapped to a target game profile",
+        after_help = "EXAMPLES:\n  \
+                      peri init cyberpunk_2077\n  \
+                      peri init starfield -p ~/Games/Starfield --name \"Constellation Pack\""
+    )]
     Init(InitArgs),
 
-    #[command(about = "Fetches a mod/modpack, parses its manifest, and adds it to the VFS cache")]
+    /// Fetch a mod archive from HTTP or BitTorrent and add it to cache
+    #[command(
+        about = "Fetch a mod archive from HTTP or BitTorrent and add it to cache",
+        after_help = "EXAMPLES:\n  \
+                      peri get https://mods.example.com/cyber_tweaks.peca\n  \
+                      peri get \"magnet:?xt=urn:btih:e3b0c44298fc...\""
+    )]
     Get(GetArgs),
 
-    #[command(about = "Downloads, unpacks, and validates the entire dependency tree")]
+    /// Solve dependencies, verify checksums, and unpack missing layers
+    #[command(
+        about = "Solve dependencies, verify checksums, and unpack missing layers",
+        after_help = "EXAMPLES:\n  \
+                      peri sync\n  \
+                      peri sync -w ~/Games/Cyberpunk"
+    )]
     Sync(SyncArgs),
 
-    #[command(about = "Compiles a local mod directory into a validated .peca archive")]
+    /// Pack a mod folder containing peri.toml into a validated .peca archive
+    #[command(
+        about = "Pack a mod folder containing peri.toml into a validated .peca archive",
+        after_help = "EXAMPLES:\n  \
+                      peri package ./my-mod\n  \
+                      peri package ./my-mod -o ./dist/mod-1.0.0.peca --level 19"
+    )]
     Package(PackageArgs),
 
-    #[command(about = "Runs global dependency DAG checks and validates file integrity")]
+    /// Scan workspace manifests for dependency cycles, missing files, and collisions
+    #[command(
+        about = "Scan workspace manifests for dependency cycles, missing files, and collisions",
+        after_help = "EXAMPLES:\n  \
+                      peri check\n  \
+                      peri check -w ~/Games/Starfield"
+    )]
     Check(CheckArgs),
 
-    #[command(about = "Spawns the namespace, constructs the VFS layer, and executes the game")]
+    /// Mount the OverlayFS stack inside an unprivileged namespace and execute the game
+    #[command(
+        about = "Mount the OverlayFS stack inside an unprivileged namespace and execute the game",
+        after_help = "EXAMPLES:\n  \
+                      peri run\n  \
+                      peri run --dry-run\n  \
+                      peri run --exec ./bin/x64/Cyberpunk2077.exe\n  \
+                      peri run -- --skip-intro +exec autoexec.cfg"
+    )]
     Run(RunArgs),
 
+    /// Inspect or initialize global configuration (~/.config/perihelion/config.toml)
     #[command(
-        about = "Inspects or initializes global configuration (~/.config/perihelion/config.toml)"
+        about = "Inspect or initialize global configuration (~/.config/perihelion/config.toml)",
+        after_help = "EXAMPLES:\n  \
+                      peri config path\n  \
+                      peri config show\n  \
+                      peri config init"
     )]
     Config(ConfigArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct InitArgs {
-    #[arg(help = "The target game identifier (e.g., cyberpunk_2077, starfield, generic)")]
+    /// Target game identifier (e.g., cyberpunk_2077, starfield, generic)
+    #[arg(value_name = "GAME_ID")]
     pub game_id: String,
 
-    #[arg(short, long, default_value = ".", help = "Target workspace directory")]
+    /// Target workspace directory to initialize
+    #[arg(
+        short,
+        long,
+        default_value = ".",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath
+    )]
     pub path: PathBuf,
 
-    #[arg(long, help = "Custom name for this modpack / workspace")]
+    /// Custom name for this modpack workspace
+    #[arg(long, value_name = "NAME")]
     pub name: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub struct GetArgs {
-    #[arg(help = "The URI (HTTP URL, Magnet link, or local path) to fetch")]
+    /// URI (HTTP URL, Magnet link, or local path) to fetch
+    #[arg(value_name = "URI", value_hint = ValueHint::AnyPath)]
     pub uri: String,
 
-    #[arg(short, long, help = "Explicit target filename in the cache")]
+    /// Explicit target filename in the package cache
+    #[arg(
+        short,
+        long,
+        value_name = "FILE",
+        value_hint = ValueHint::FilePath
+    )]
     pub output: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
 pub struct SyncArgs {
-    #[arg(short, long, default_value = ".", help = "Path to the workspace root")]
+    /// Path to workspace root directory containing peri.toml
+    #[arg(
+        short,
+        long,
+        default_value = ".",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath
+    )]
     pub workspace: PathBuf,
 }
 
 #[derive(Debug, Args)]
 pub struct PackageArgs {
+    /// Path to mod directory containing root peri.toml
     #[arg(
         short,
         long,
         default_value = ".",
-        help = "Path to mod folder containing peri.toml"
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath
     )]
     pub source: PathBuf,
 
-    #[arg(short, long, help = "Output .peca archive path")]
-    pub output: Option<PathBuf>,
-
+    /// Destination path for the generated .peca archive
     #[arg(
         short,
         long,
-        default_value = "3",
-        help = "Zstandard compression level (1-22)"
+        value_name = "FILE",
+        value_hint = ValueHint::FilePath
     )]
+    pub output: Option<PathBuf>,
+
+    /// Zstandard compression level (1-22)
+    #[arg(short, long, default_value = "3", value_name = "LEVEL")]
     pub level: i32,
 }
 
 #[derive(Debug, Args)]
 pub struct CheckArgs {
-    #[arg(short, long, default_value = ".", help = "Path to the workspace root")]
+    /// Path to workspace root directory containing peri.toml
+    #[arg(
+        short,
+        long,
+        default_value = ".",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath
+    )]
     pub workspace: PathBuf,
 }
 
 #[derive(Debug, Args)]
 pub struct RunArgs {
-    #[arg(short, long, default_value = ".", help = "Path to the workspace root")]
+    /// Path to workspace root directory containing peri.toml
+    #[arg(
+        short,
+        long,
+        default_value = ".",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath
+    )]
     pub workspace: PathBuf,
 
-    #[arg(
-        long,
-        help = "Simulate OverlayFS mount options without spawning kernel namespaces"
-    )]
+    /// Simulate OverlayFS mount arguments without spawning kernel namespaces
+    #[arg(long, help_heading = "Execution Options")]
     pub dry_run: bool,
 
-    #[arg(long, help = "Override executable command")]
+    /// Override the target executable command
+    #[arg(long, value_name = "COMMAND", help_heading = "Execution Options")]
     pub exec: Option<String>,
 
+    /// Explicit path to Proton runner binary or installation directory
     #[arg(
         long,
-        help = "Explicit path to Proton binary or installation directory"
+        value_name = "PATH",
+        value_hint = ValueHint::DirPath,
+        help_heading = "Environment Options"
     )]
     pub proton: Option<PathBuf>,
 
-    #[arg(long, help = "Explicit path to Wine prefix or compatdata directory")]
+    /// Explicit path to Wine prefix or compatdata directory
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = ValueHint::DirPath,
+        help_heading = "Environment Options"
+    )]
     pub prefix: Option<PathBuf>,
 
-    #[arg(long, help = "Force direct native execution without Proton")]
+    /// Force native Linux execution without Proton compatibility runners
+    #[arg(long, help_heading = "Environment Options")]
     pub native: bool,
 
-    #[arg(last = true, help = "Arguments passed through to the game executable")]
+    /// Trailing arguments forwarded directly to the game binary
+    #[arg(last = true, value_name = "ARGS")]
     pub args: Vec<String>,
 }
 
@@ -160,10 +253,15 @@ pub struct ConfigArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ConfigAction {
-    #[command(about = "Displays the path to the global config.toml")]
+    /// Display the path to global config.toml
+    #[command(about = "Display the path to global config.toml")]
     Path,
-    #[command(about = "Displays the active global configuration")]
+
+    /// Display the active global configuration values
+    #[command(about = "Display the active global configuration values")]
     Show,
-    #[command(about = "Initializes default ~/.config/perihelion/config.toml")]
+
+    /// Initialize default ~/.config/perihelion/config.toml
+    #[command(about = "Initialize default ~/.config/perihelion/config.toml")]
     Init,
 }

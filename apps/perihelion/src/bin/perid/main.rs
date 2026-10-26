@@ -16,8 +16,9 @@
 
 use std::path::{Path, PathBuf};
 
-use clap::Parser;
+use clap::{Parser, ValueHint};
 use directories::ProjectDirs;
+use helion::cli_styles;
 use miette::Result;
 use peri_core::{validate_safe_path, GlobalConfig, CONFIG_FILENAME};
 use peri_net::torrent::{SeedingConfig, TorrentEngine};
@@ -29,19 +30,42 @@ use tracing_subscriber::FmtSubscriber;
     name = "perid",
     author = "Eduardo Marques Santos and Perihelion Contributors",
     version,
-    about = "Perihelion Background Seeding Daemon"
+    about = "Background P2P seeding daemon for Perihelion package archives",
+    long_about = "perid - Background P2P Seeding Daemon for Perihelion.\n\n\
+                  Monitors the local cache directory and seeds completed .peca\n\
+                  archives back to the BitTorrent DHT network. Designed to run as an\n\
+                  unobtrusive background process or systemd user service.",
+    styles = cli_styles(),
+    color = clap::ColorChoice::Auto,
+    after_help = "EXAMPLES:\n  \
+                  perid\n  \
+                  perid --upload-limit 500\n  \
+                  perid --cache-dir ~/.config/perihelion/cache/mods -v"
 )]
 struct Args {
-    /// Path to the Perihelion cache directory
-    #[arg(short, long)]
+    /// Custom path to the Perihelion package cache directory
+    #[arg(
+        short,
+        long,
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath,
+        env = "PERID_CACHE_DIR",
+        help_heading = "Storage Options"
+    )]
     cache_dir: Option<PathBuf>,
 
-    /// Maximum upload speed in KB/s (0 for unlimited)
-    #[arg(short, long)]
+    /// Maximum upload bandwidth throttle in KB/s (0 for uncapped upstream)
+    #[arg(
+        short,
+        long,
+        value_name = "KBPS",
+        env = "PERID_UPLOAD_LIMIT",
+        help_heading = "Bandwidth Options"
+    )]
     upload_limit: Option<u32>,
 
-    /// Enable verbose debug logging
-    #[arg(short, long)]
+    /// Enable verbose debug and peer tracing logs
+    #[arg(short, long, global = true, help_heading = "Logging")]
     verbose: bool,
 }
 

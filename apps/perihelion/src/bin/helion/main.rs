@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use clap::Parser;
 use crossterm::{
     event::{KeyCode, KeyModifiers},
     execute,
@@ -28,10 +29,14 @@ use std::time::Duration;
 use helion::action::{Action, ModsFocus, ProfilesFocus, Tab};
 use helion::app::App;
 use helion::event::{Event, EventHandler};
+use helion::HelionArgs;
 use helion::{ui, worker};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Parse CLI arguments before touching terminal state so `--help` and `--version` work cleanly
+    let args = HelionArgs::parse();
+
     // Install panic hook for clean terminal restoration
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
@@ -51,27 +56,46 @@ async fn main() -> Result<()> {
 
     let mut app = App::new();
 
+    // Apply initial tab if specified via CLI
+    if let Some(tab_name) = &args.tab {
+        let initial_tab = match tab_name.to_lowercase().as_str() {
+            "mods" => Some(Tab::Mods),
+            "conflicts" => Some(Tab::Conflicts),
+            "downloads" => Some(Tab::Downloads),
+            "profiles" => Some(Tab::Profiles),
+            "overview" => Some(Tab::Overview),
+            _ => None,
+        };
+        if let Some(tab) = initial_tab {
+            app.handle_action(Action::SetTab(tab));
+        }
+    }
+
+    let workspace_path = &args.workspace;
+
     // Startup Session Recovery Flow (Crash-Resilient Session Restoration)
-    if let Some(recovery) = worker::check_recovery_draft(std::path::Path::new(".")).await {
-        match recovery {
-            worker::RecoveryStatus::CleanResume(draft) => {
-                app.handle_action(Action::SessionRestored(draft));
-            }
-            worker::RecoveryStatus::Conflict {
-                on_disk_hash,
-                draft_hash,
-                ..
-            } => {
-                app.handle_action(Action::RecoveryConflictDetected {
+    if !args.no_recovery {
+        if let Some(recovery) = worker::check_recovery_draft(workspace_path).await {
+            match recovery {
+                worker::RecoveryStatus::CleanResume(draft) => {
+                    app.handle_action(Action::SessionRestored(draft));
+                }
+                worker::RecoveryStatus::Conflict {
                     on_disk_hash,
                     draft_hash,
-                });
+                    ..
+                } => {
+                    app.handle_action(Action::RecoveryConflictDetected {
+                        on_disk_hash,
+                        draft_hash,
+                    });
+                }
             }
         }
     }
 
     // Detached Process Recovery: Check if a game process was left running across terminal restarts
-    if let Some(active) = worker::check_active_game_session(std::path::Path::new(".")) {
+    if let Some(active) = worker::check_active_game_session(workspace_path) {
         app.handle_action(Action::GameStarted {
             pid: active.pid,
             snapshot_id: active.snapshot_id,

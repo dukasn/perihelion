@@ -22,8 +22,11 @@
 pub mod action;
 pub mod app;
 pub mod autocomplete;
+pub mod cli;
 pub mod event;
 pub mod theme;
 pub mod ui;
 pub mod views;
 pub mod worker;
+
+pub use cli::{cli_styles, HelionArgs};
