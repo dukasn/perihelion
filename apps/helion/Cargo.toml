@@ -12,10 +12,6 @@ description = "Perihelion Native Terminal User Interface"
 name = "helion"
 path = "src/lib.rs"
 
-[[bin]]
-name = "helion"
-path = "src/main.rs"
-
 [dependencies]
 peri-core.workspace = true
 peri-vfs.workspace = true
@@ -39,7 +35,3 @@ toml.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-
-
-[package.metadata.dist]
-dist = true

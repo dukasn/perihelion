@@ -2618,27 +2618,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "peri"
-version = "0.1.0"
-dependencies = [
- "clap",
- "directories",
- "miette",
- "peri-archive",
- "peri-core",
- "peri-net",
- "peri-vfs",
- "semver",
- "serde",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "peri-archive"
 version = "0.1.0"
 dependencies = [
@@ -2699,16 +2678,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "perid"
+name = "perihelion"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "crossterm",
  "directories",
+ "futures",
+ "helion",
  "miette",
+ "peri-archive",
  "peri-core",
  "peri-net",
+ "peri-vfs",
+ "ratatui",
+ "semver",
+ "serde",
  "shellexpand",
+ "tempfile",
+ "thiserror 2.0.21",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
 ]

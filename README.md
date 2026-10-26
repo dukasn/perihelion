@@ -104,7 +104,7 @@ A lightweight, low-overhead background daemon that powers P2P BitTorrent swarm s
 
 Run `perid` with:
 ```bash
-cargo run -p perid -- --help
+cargo run --bin perid -- --help
 ```
 
 ---
@@ -133,10 +133,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 
 # 4. CLI Sanity check
-cargo run -p peri -- --help
+cargo run --bin peri -- --help
 
 # 5. Background daemon sanity check
-cargo run -p perid -- --help
+cargo run --bin perid -- --help
 
 # 6. Helion TUI Sanity check
 cargo run -p helion

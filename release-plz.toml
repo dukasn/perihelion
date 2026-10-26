@@ -9,7 +9,7 @@ git_tag_enable = false
 
 # Single lockstep tag (vX.Y.Z) so cargo-dist's `v*` trigger fires once.
 [[package]]
-name = "peri"
+name = "perihelion"
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
 changelog_update = true

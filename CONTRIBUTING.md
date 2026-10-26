@@ -28,8 +28,8 @@ perihelion/
 
 ### Component Roles & Naming
 - **Perihelion**: The overarching open-source project and virtual filesystem ecosystem.
-- **`peri`**: The headless CLI orchestration utility (`apps/peri`).
-- **`perid`**: The official daemon background service (`apps/perid`).
+- **`peri`**: The headless CLI orchestration utility (`apps/perihelion/src/bin/peri`).
+- **`perid`**: The official daemon background service (`apps/perihelion/src/bin/perid`).
 - **`helion`**: The keyboard-first interactive TUI dashboard (`apps/helion`).
 
 > [!IMPORTANT]
@@ -118,10 +118,10 @@ cargo fmt --all --check
 python3 scripts/check_license_headers.py --check
 
 # 5. End-to-end CLI sanity check
-cargo run -p peri -- --help
+cargo run --bin peri -- --help
 
 # 6. Background daemon sanity check
-cargo run -p perid -- --help
+cargo run --bin perid -- --help
 
 # 7. Helion TUI sanity check
 cargo run -p helion
@@ -157,8 +157,8 @@ We follow the [Conventional Commits](https://www.conventionalcommits.org/) speci
 - `(vfs)`: Changes to `crates/peri-vfs`
 - `(archive)`: Changes to `crates/peri-archive`
 - `(net)`: Changes to `crates/peri-net`
-- `(peri)`: Changes to `apps/peri` CLI
-- `(perid)`: Changes to `apps/perid` daemon
+- `(peri)`: Changes to `apps/perihelion/src/bin/peri` CLI
+- `(perid)`: Changes to `apps/perihelion/src/bin/perid` daemon
 - `(helion)`: Changes to `apps/helion` TUI
 - `(assets)`: Changes to visual assets or banners
 

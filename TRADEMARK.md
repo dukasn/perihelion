@@ -26,8 +26,8 @@ The following names identify distinct components of this project:
 | Name | Role | Location | Description |
 | :--- | :--- | :--- | :--- |
 | **Perihelion** | The Overall Project | Repository & Ecosystem | The umbrella open-source project, architecture, protocol, and virtual filesystem tooling suite. |
-| **`peri`** | Headless CLI & Engine | `apps/peri` | The command-line orchestration utility and automation interface. |
-| **`perid`** | Official Daemon Service | `apps/perid` | The official background daemon for P2P swarm seeding, cache monitoring, and background tasks. |
+| **`peri`** | Headless CLI & Engine | `apps/perihelion/src/bin/peri` | The command-line orchestration utility and automation interface. |
+| **`perid`** | Official Daemon Service | `apps/perihelion/src/bin/perid` | The official background daemon for P2P swarm seeding, cache monitoring, and background tasks. |
 | **`helion`** | Interactive TUI Shell | `apps/helion` | The terminal-native interactive dashboard and keyboard-first management interface. |
 | **Project Artwork** | Official Identity | `assets/` | The official banners, logos, and vector brand marks. |
 

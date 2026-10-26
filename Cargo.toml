@@ -1,8 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "apps/peri",
-    "apps/perid",
+    "apps/perihelion",
     "apps/helion",
     "crates/peri-vfs",
     "crates/peri-net",
