@@ -225,11 +225,16 @@ mod tests {
             .await
             .expect("Send succeeded");
 
-        // Wait for debounce period (50ms + margin)
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
+        // Poll rather than fixed sleep: slow CI runners can exceed the debounce margin.
         let draft_path = workspace.join(".perihelion").join(DRAFT_FILENAME);
         let tmp_path = workspace.join(".perihelion").join(DRAFT_TMP_FILENAME);
+
+        for _ in 0..100 {
+            if draft_path.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
 
         assert!(draft_path.exists(), "draft.json must exist after flush");
         assert!(!tmp_path.exists(), "draft.json.tmp must have been renamed");
@@ -243,7 +248,12 @@ mod tests {
             .await
             .expect("Purge command succeeded");
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        for _ in 0..100 {
+            if !draft_path.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
         assert!(!draft_path.exists(), "draft.json must be removed on purge");
 
         drop(tx);
