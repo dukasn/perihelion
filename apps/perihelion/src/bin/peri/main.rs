@@ -20,8 +20,8 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use miette::Result;
-use tracing::{info, Level};
-use tracing_subscriber::FmtSubscriber;
+use tracing::{debug, info, info_span};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 mod cli;
 mod config;
@@ -52,23 +52,26 @@ const WORK_DIR: &str = ".perihelion/work";
 const MOUNT_DIR: &str = ".perihelion/mnt";
 const PROFILES_DIR: &str = ".perihelion/profiles";
 
+fn init_tracing(verbose: bool) {
+    let default_filter = if verbose {
+        "peri=debug,peri_vfs=debug,peri_net=debug,peri_archive=debug,info"
+    } else {
+        "peri=warn,peri_vfs=warn,peri_net=warn,peri_archive=warn,warn"
+    };
+
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
+
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_target(false).compact())
+        .with(filter)
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-
-    let log_level = if cli.verbose {
-        Level::DEBUG
-    } else {
-        Level::INFO
-    };
-
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(log_level)
-        .with_target(false)
-        .without_time()
-        .finish();
-
-    let _ = tracing::subscriber::set_global_default(subscriber);
+    init_tracing(cli.verbose);
 
     match cli.command {
         Commands::Init(args) => handle_init(args).await?,
@@ -155,6 +158,9 @@ fn validate_workspace_path(path: &Path) -> Result<PathBuf, CliError> {
 }
 
 async fn handle_config(args: ConfigArgs) -> Result<(), CliError> {
+    let span = info_span!("config");
+    let _enter = span.enter();
+
     let action = args.action.unwrap_or(ConfigAction::Show);
     let config_dir = resolve_config_dir();
     let config_file = config_dir.join(peri_core::CONFIG_FILENAME);
@@ -175,7 +181,7 @@ async fn handle_config(args: ConfigArgs) -> Result<(), CliError> {
         ConfigAction::Init => {
             if config_file.exists() {
                 println!(
-                    "ℹ️  Global configuration file already exists at {}",
+                    "Global configuration file already exists at {}",
                     config_file.display()
                 );
             } else {
@@ -188,7 +194,7 @@ async fn handle_config(args: ConfigArgs) -> Result<(), CliError> {
                 let toml = config.to_toml_str()?;
                 fs::write(&config_file, toml).map_err(|e| CliError::Workspace(e.to_string()))?;
                 println!(
-                    "✨ Created default configuration file at {}",
+                    "Created default configuration file at {}",
                     config_file.display()
                 );
             }
@@ -199,6 +205,9 @@ async fn handle_config(args: ConfigArgs) -> Result<(), CliError> {
 }
 
 async fn handle_init(args: InitArgs) -> Result<(), CliError> {
+    let span = info_span!("init", game_id = %args.game_id);
+    let _enter = span.enter();
+
     let workspace_path = validate_workspace_path(&args.path)?;
     fs::create_dir_all(&workspace_path).map_err(|e| CliError::Workspace(e.to_string()))?;
 
@@ -257,7 +266,7 @@ async fn handle_init(args: InitArgs) -> Result<(), CliError> {
 
     let profile = resolve_game_profile(&workspace_path, &args.game_id);
     println!(
-        "✨ Initialized Perihelion workspace for '{}' ({}) at {}",
+        "Initialized Perihelion workspace for '{}' ({}) at {}",
         profile.name,
         profile.id,
         workspace_path
@@ -273,6 +282,9 @@ async fn handle_init(args: InitArgs) -> Result<(), CliError> {
 }
 
 async fn handle_package(args: PackageArgs) -> Result<(), CliError> {
+    let span = info_span!("package");
+    let _enter = span.enter();
+
     let source_dir = validate_workspace_path(&args.source)?;
     let manifest_path = source_dir.join(MANIFEST_FILENAME);
 
@@ -303,7 +315,7 @@ async fn handle_package(args: PackageArgs) -> Result<(), CliError> {
     let packaged_manifest = create_peca(&source_dir, &output_path, args.level)?;
     let sha256 = compute_file_sha256(&output_path)?;
 
-    println!("📦 Successfully packaged .peca archive:");
+    println!("Successfully packaged .peca archive:");
     println!("   File:    {}", output_path.display());
     println!(
         "   Mod:     {} v{}",
@@ -316,6 +328,9 @@ async fn handle_package(args: PackageArgs) -> Result<(), CliError> {
 }
 
 async fn handle_get(args: GetArgs) -> Result<(), CliError> {
+    let span = info_span!("get", uri = %args.uri);
+    let _enter = span.enter();
+
     let _global_config = load_global_config();
     let cache_dir = Path::new(CACHE_MODS_DIR);
     fs::create_dir_all(cache_dir).map_err(|e| CliError::Workspace(e.to_string()))?;
@@ -368,8 +383,16 @@ async fn handle_get(args: GetArgs) -> Result<(), CliError> {
     let vfi_cache_dir = Path::new(VFI_CACHE_DIR);
     let index = load_or_cache_vfi(vfi_cache_dir, &dest_file, &manifest)?;
 
+    debug!(
+        mod_id = %manifest.package.name,
+        version = %manifest.package.version,
+        files_indexed = index.files.len(),
+        path = %dest_file.display(),
+        "Package successfully cached"
+    );
+
     println!(
-        "📥 Successfully cached mod '{}' v{} ({} files indexed) -> {}",
+        "Successfully cached mod '{}' v{} ({} files indexed) -> {}",
         manifest.package.name,
         manifest.package.version,
         index.files.len(),
@@ -381,6 +404,9 @@ async fn handle_get(args: GetArgs) -> Result<(), CliError> {
 
 async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
     let workspace = validate_workspace_path(&args.workspace)?;
+    let span = info_span!("sync", workspace = %workspace.display());
+    let _enter = span.enter();
+
     let cache_dir = workspace.join(CACHE_MODS_DIR);
     let extracted_dir = workspace.join(EXTRACTED_DIR);
 
@@ -434,20 +460,20 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
                         if lock.satisfies_requirements(&root_manifest.dependencies) {
                             resolved = lock.package_map();
                             use_lock = true;
-                            info!("🔒 Reusing locked package versions from peri.lock");
+                            info!("Reusing locked package versions from peri.lock");
                         }
                     }
                 }
             }
 
             if !use_lock {
-                info!("🧩 Running PubGrub CDCL SAT solver for dependencies...");
+                info!("Running PubGrub CDCL SAT solver for dependencies...");
                 resolved = solve_workspace(&catalog, root_manifest)?;
                 let lockfile = Lockfile::from_solution(&resolved);
                 let lock_toml = lockfile.to_toml_str()?;
                 fs::write(&lockfile_path, lock_toml)
                     .map_err(|e| CliError::Workspace(e.to_string()))?;
-                println!("🔒 Generated updated {}", LOCKFILE_FILENAME);
+                println!("Generated updated {}", LOCKFILE_FILENAME);
             }
             Some(resolved)
         } else {
@@ -494,17 +520,24 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
 
     // Stage 2: Validate DAG and resolve load order
     let resolved_order = graph.resolve_load_order()?;
-    println!("🔄 Resolving load order and synchronizing VFS layers...");
+    println!("Resolving load order and synchronizing VFS layers...");
 
     for name in &resolved_order {
         if let Some((manifest, peca_path)) = active_peca_files
             .iter()
             .find(|(m, _)| &m.package.name == name)
         {
+            let unpack_span = info_span!(
+                "unpack_layer",
+                mod_id = %manifest.package.name,
+                version = %manifest.package.version
+            );
+            let _unpack_enter = unpack_span.enter();
+
             let dest_layer = extracted_dir.join(&manifest.package.name);
             extract_peca(peca_path, &dest_layer)?;
             println!(
-                "   ✓ Unpacked {} v{} -> {}",
+                "   Unpacked {} v{} -> {}",
                 manifest.package.name,
                 manifest.package.version,
                 dest_layer.display()
@@ -513,7 +546,7 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
     }
 
     println!(
-        "✨ Workspace synchronization complete: {} mods active.",
+        "Workspace synchronization complete: {} mods active.",
         resolved_order.len()
     );
     Ok(())
@@ -521,6 +554,9 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
 
 async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
     let workspace = validate_workspace_path(&args.workspace)?;
+    let span = info_span!("check", workspace = %workspace.display());
+    let _enter = span.enter();
+
     let root_manifest_path = workspace.join(MANIFEST_FILENAME);
     let mut overrides: HashMap<String, OverrideRule> = HashMap::new();
     let mut game_profile = GameProfile::generic("generic");
@@ -537,7 +573,7 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
 
     let cache_dir = workspace.join(CACHE_MODS_DIR);
     if !cache_dir.exists() {
-        println!("ℹ️  No mods cached in {}", cache_dir.display());
+        println!("No mods cached in {}", cache_dir.display());
         return Ok(());
     }
 
@@ -570,14 +606,14 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
         if !root_manifest.dependencies.is_empty() {
             let solved = solve_workspace(&catalog, root_manifest)?;
             println!(
-                "✅ Stage 1: PubGrub SAT solver verified {} version constraints.",
+                "Stage 1: PubGrub SAT solver verified {} version constraints.",
                 solved.len()
             );
         }
     }
 
     println!(
-        "🔍 Stage 2 & 3: Validating dependency DAG and Virtual File Index (VFI) for {} packages...",
+        "Stage 2 & 3: Validating dependency DAG and Virtual File Index (VFI) for {} packages...",
         count
     );
 
@@ -585,7 +621,7 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
     let reports = vfi.resolve_conflicts_waterfall(&mut graph, &overrides)?;
     if !reports.is_empty() {
         println!(
-            "⚡ Detected and resolved {} file conflict(s) via 3-Tier Waterfall:",
+            "Detected and resolved {} file conflict(s) via 3-Tier Waterfall:",
             reports.len()
         );
         for report in &reports {
@@ -605,12 +641,12 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
             }
         }
     } else {
-        println!("✨ Virtual File Index check clean: no file conflicts detected.");
+        println!("Virtual File Index check clean: no file conflicts detected.");
     }
 
     let order = graph.resolve_load_order()?;
-    println!("✅ DAG check passed successfully. No cycles detected!");
-    println!("📋 Calculated Deterministic Load Order (OverlayFS stack):");
+    println!("DAG check passed successfully. No cycles detected!");
+    println!("Calculated Deterministic Load Order (OverlayFS stack):");
     for (idx, mod_name) in order.iter().enumerate() {
         println!("   [{}] {}", idx + 1, mod_name);
     }
@@ -633,6 +669,9 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
     let manifest_content =
         fs::read_to_string(&root_manifest_path).map_err(|e| CliError::Workspace(e.to_string()))?;
     let manifest = Manifest::from_toml_str(&manifest_content)?;
+
+    let span = info_span!("run", game_id = %manifest.target.game_id);
+    let _enter = span.enter();
 
     let profile = resolve_game_profile(&workspace, &manifest.target.game_id);
 
@@ -710,14 +749,14 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
         None
     };
 
-    println!("🚀 Preparing Perihelion Virtual File System sandbox:");
+    println!("Preparing Perihelion Virtual File System sandbox:");
     println!("   Game:          {} ({})", profile.name, profile.id);
     println!("   Active Layers: {}", resolved_order.len());
     println!("   Mount Point:   {}", plan.mount_point.display());
     println!("   Mount Options: {}", mount_options);
 
     if let Some(ref proton) = proton_launch {
-        println!("🍷 Compatibility Layer: Proton / Wine");
+        println!("Compatibility Layer: Proton / Wine");
         println!("   Proton Runner:       {}", proton.runner.display());
         println!(
             "   Compat Data:         {}",
@@ -726,12 +765,12 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
         println!("   Wine Prefix:         {}", proton.wine_prefix.display());
         println!("   Target Binary:       {} {:?}", exec_cmd, args.args);
     } else {
-        println!("🐧 Compatibility Layer: Native Linux process");
+        println!("Compatibility Layer: Native Linux process");
         println!("   Target Binary:       {} {:?}", exec_cmd, args.args);
     }
 
     if args.dry_run {
-        println!("🔎 [DRY-RUN] Verification complete. Sandboxed mount and execution ready.");
+        println!("[DRY-RUN] Verification complete. Sandboxed mount and execution ready.");
         if let Some(ref proton) = proton_launch {
             println!(
                 "   [DRY-RUN] Command payload: {} run {} {:?}",

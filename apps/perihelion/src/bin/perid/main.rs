@@ -22,8 +22,8 @@ use helion::cli_styles;
 use miette::Result;
 use peri_core::{validate_safe_path, GlobalConfig, CONFIG_FILENAME};
 use peri_net::torrent::{SeedingConfig, TorrentEngine};
-use tracing::{info, warn, Level};
-use tracing_subscriber::FmtSubscriber;
+use tracing::{info, warn};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -92,23 +92,29 @@ fn load_global_config() -> GlobalConfig {
     }
 }
 
+fn init_tracing(verbose: bool) {
+    let default_filter = if verbose {
+        "perid=debug,peri_net=debug,info"
+    } else {
+        "perid=warn,peri_net=warn,warn"
+    };
+
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
+
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_target(false).compact())
+        .with(filter)
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
     let global_config = load_global_config();
 
     // 1. Initialize logging
-    let max_level = if args.verbose {
-        Level::DEBUG
-    } else {
-        Level::INFO
-    };
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(max_level)
-        .with_target(false)
-        .without_time()
-        .finish();
-    let _ = tracing::subscriber::set_global_default(subscriber);
+    init_tracing(args.verbose);
 
     let raw_cache = args
         .cache_dir
@@ -134,7 +140,7 @@ async fn main() -> Result<()> {
         .upload_limit
         .unwrap_or(global_config.network.daemon_upload_limit_kbs);
 
-    info!("🚀 Starting perid - Perihelion Seeding Daemon");
+    info!("Starting perid - Perihelion Seeding Daemon");
     info!(cache = %cache_path.display(), "Monitoring cache");
     info!(limit_kbs = upload_limit, "Upload rate limit configured");
 
@@ -157,7 +163,7 @@ async fn main() -> Result<()> {
                     .file_name()
                     .and_then(|f| f.to_str())
                     .unwrap_or("unknown.peca");
-                info!(mod_archive = %filename, "🌱 Seeding archive");
+                info!(mod_archive = %filename, "Seeding archive");
                 if let Err(e) = engine.seed_file(&path).await {
                     warn!(error = %e, mod_archive = %filename, "Failed to register archive for seeding");
                 } else {
@@ -169,13 +175,13 @@ async fn main() -> Result<()> {
 
     info!(
         count = seeded_count,
-        "✅ Active seeder: serving .peca archives over BitTorrent DHT"
+        "Active seeder: serving .peca archives over BitTorrent DHT"
     );
 
     // 4. Wait for termination signals (SIGINT / SIGTERM)
     wait_for_shutdown().await;
 
-    info!("🛑 Shutting down perid gracefully...");
+    info!("Shutting down perid gracefully...");
     Ok(())
 }
 

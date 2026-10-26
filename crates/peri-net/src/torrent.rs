@@ -25,7 +25,7 @@ pub mod bittorrent {
 
     use librqbit::limits::LimitsConfig;
     use librqbit::{AddTorrent, AddTorrentOptions, CreateTorrentOptions, Session, SessionOptions};
-    use tracing::info;
+    use tracing::{debug, info, info_span};
 
     use crate::NetError;
 
@@ -81,7 +81,9 @@ pub mod bittorrent {
 
         /// Generates torrent metadata for a local file and begins seeding it to the BitTorrent DHT.
         pub async fn seed_file(&self, path: &Path) -> Result<(), NetError> {
-            info!(path = ?path, "Registering archive for P2P seeding");
+            let span = info_span!("seed_file", path = %path.display());
+            let _enter = span.enter();
+            info!("Registering archive for P2P seeding");
             let opts = CreateTorrentOptions {
                 name: None,
                 trackers: Vec::new(),
@@ -91,6 +93,7 @@ pub mod bittorrent {
                 .create_and_serve_torrent(path, opts)
                 .await
                 .map_err(|e| NetError::P2pError(e.to_string()))?;
+            debug!("Archive registered and seeding initialized");
             Ok(())
         }
 
@@ -111,7 +114,9 @@ pub mod bittorrent {
 
     /// Lower-level helper to add a magnet link to an active session and await completion.
     pub async fn download_magnet(session: &Arc<Session>, magnet: &str) -> Result<(), NetError> {
-        info!(magnet = %magnet, "Adding magnet link to session");
+        let span = info_span!("download_magnet", magnet = %magnet);
+        let _enter = span.enter();
+        info!("Adding magnet link to session");
         let add = AddTorrent::from_url(magnet);
         let opts = AddTorrentOptions {
             paused: false,
@@ -127,10 +132,12 @@ pub mod bittorrent {
             .into_handle()
             .ok_or_else(|| NetError::P2pError("Torrent handle unavailable".to_string()))?;
 
+        debug!("Waiting for BitTorrent piece pipeline to complete");
         response
             .wait_until_completed()
             .await
             .map_err(|e| NetError::P2pError(e.to_string()))?;
+        debug!("BitTorrent piece download completed");
         Ok(())
     }
 }

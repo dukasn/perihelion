@@ -31,7 +31,7 @@ use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{unshare, CloneFlags};
 use nix::unistd::{getegid, geteuid};
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::{debug, info, info_span, warn};
 
 #[derive(Debug, Error)]
 pub enum VfsError {
@@ -161,6 +161,10 @@ pub fn mount_overlay(plan: &VfsPlan) -> Result<(), VfsError> {
 
     let options = plan.format_mount_options()?;
 
+    let span = info_span!("mount_overlay", mount_point = %plan.mount_point.display());
+    let _enter = span.enter();
+    debug!(options = %options, "Mounting OverlayFS");
+
     mount(
         Some("overlay"),
         &plan.mount_point,
@@ -178,6 +182,7 @@ pub fn mount_overlay(plan: &VfsPlan) -> Result<(), VfsError> {
 
 /// Unmounts an existing overlay mount point.
 pub fn unmount_overlay(mount_point: &Path) -> Result<(), VfsError> {
+    debug!(mount_point = %mount_point.display(), "Detaching OverlayFS mount");
     umount2(mount_point, MntFlags::MNT_DETACH)?;
     Ok(())
 }
@@ -240,7 +245,7 @@ fn apply_sandbox_policy(plan: &VfsPlan, policy: &SandboxPolicy) -> Result<(), Vf
     );
 
     if policy.readonly_root {
-        info!("🔒 Enforcing Zero-Trust execution boundary: remounting '/' read-only");
+        info!("Enforcing zero-trust execution boundary: remounting '/' read-only");
 
         // Collect all explicitly whitelisted writable paths
         let mut writable = policy.writable_paths.clone();
@@ -250,6 +255,11 @@ fn apply_sandbox_policy(plan: &VfsPlan, policy: &SandboxPolicy) -> Result<(), Vf
         if let Some(work) = &plan.work_dir {
             writable.push(work.clone());
         }
+
+        debug!(
+            writable_count = writable.len(),
+            "Configuring sandbox writable paths"
+        );
 
         // Bind mount each writable path onto itself so it becomes an independent mount point
         for path in &writable {
@@ -337,6 +347,10 @@ pub fn execute_in_isolated_namespace_with_policy(
     args: &[String],
     env_vars: &[(String, String)],
 ) -> Result<i32, VfsError> {
+    let span = info_span!("execute_in_isolated_namespace", command = %command);
+    let _enter = span.enter();
+    debug!("Spawning isolated namespace and configuring sandbox");
+
     let euid = geteuid();
     let egid = getegid();
 

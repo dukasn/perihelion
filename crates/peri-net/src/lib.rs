@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use peri_core::Assets;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::{debug, info, info_span, warn};
 
 pub mod stream;
 pub mod torrent;
@@ -63,7 +63,9 @@ pub async fn fetch_http(
     output_path: &Path,
     expected_sha256: Option<&str>,
 ) -> Result<(), NetError> {
-    info!(url = %url, path = ?output_path, "Initiating HTTP download");
+    let span = info_span!("fetch_http", url = %url, path = %output_path.display());
+    let _enter = span.enter();
+    info!("Initiating HTTP download");
 
     let client = reqwest::Client::builder().build()?;
     let response = client.get(url).send().await?.error_for_status()?;
@@ -92,6 +94,8 @@ pub async fn fetch_http(
             });
         }
         info!(hash = %calculated_hash, "Checksum verified successfully");
+    } else {
+        debug!(hash = %calculated_hash, "Downloaded file without checksum verification");
     }
 
     Ok(())
@@ -99,6 +103,8 @@ pub async fn fetch_http(
 
 /// Downloads package assets from either BitTorrent or HTTP with automatic fallback.
 pub async fn fetch_asset(assets: &Assets, destination_file: &Path) -> Result<(), NetError> {
+    let span = info_span!("fetch_asset", destination = %destination_file.display());
+    let _enter = span.enter();
     let mut downloaded = false;
 
     // Try BitTorrent first if magnet is defined
@@ -132,6 +138,8 @@ pub async fn fetch_asset(assets: &Assets, destination_file: &Path) -> Result<(),
 /// Fetches via BitTorrent magnet link.
 #[allow(unused_variables)]
 pub async fn fetch_magnet(magnet: &str, destination: &Path) -> Result<(), NetError> {
+    let span = info_span!("fetch_magnet", magnet = %magnet, destination = %destination.display());
+    let _enter = span.enter();
     #[cfg(feature = "bittorrent")]
     {
         let download_dir = destination.parent().unwrap_or_else(|| Path::new("."));

@@ -17,7 +17,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tracing::{debug, info};
+use tracing::{debug, info, info_span};
 
 use crate::VfsError;
 
@@ -173,6 +173,10 @@ impl SteamDiscovery {
         explicit_proton: Option<&Path>,
         explicit_prefix: Option<&Path>,
     ) -> Result<ProtonLaunch, VfsError> {
+        let span = info_span!("resolve_proton_launch", ?steam_app_id);
+        let _enter = span.enter();
+        debug!("Resolving Proton launch configuration");
+
         let steam_root = Self::find_active_steam_root().unwrap_or_else(|| {
             PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
                 .join(".local/share/Steam")

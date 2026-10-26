@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use peri_core::{validate_safe_path, Manifest, PackageFileIndex, SecurityError, MANIFEST_FILENAME};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use tracing::{debug, info_span, trace};
 
 #[derive(Debug, Error)]
 pub enum ArchiveError {
@@ -62,6 +63,7 @@ pub enum ArchiveError {
 
 /// Computes the SHA-256 hash of a file as a lowercase hexadecimal string.
 pub fn compute_file_sha256(path: &Path) -> Result<String, ArchiveError> {
+    trace!(path = %path.display(), "Computing SHA-256 file checksum");
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 65536];
@@ -79,6 +81,7 @@ pub fn compute_file_sha256(path: &Path) -> Result<String, ArchiveError> {
 
 /// Reads only the `peri.toml` manifest from a `.peca` archive without full extraction.
 pub fn read_manifest_from_peca(peca_path: &Path) -> Result<Manifest, ArchiveError> {
+    trace!(path = %peca_path.display(), "Reading manifest from .peca archive");
     let file = File::open(peca_path)?;
     let decoder =
         zstd::stream::Decoder::new(file).map_err(|e| ArchiveError::Compression(e.to_string()))?;
@@ -100,6 +103,7 @@ pub fn read_manifest_from_peca(peca_path: &Path) -> Result<Manifest, ArchiveErro
 
 /// Lists all file paths contained in a `.peca` archive (excluding root peri.toml).
 pub fn list_peca_files(peca_path: &Path) -> Result<Vec<String>, ArchiveError> {
+    trace!(path = %peca_path.display(), "Listing files in .peca archive");
     let file = File::open(peca_path)?;
     let decoder =
         zstd::stream::Decoder::new(file).map_err(|e| ArchiveError::Compression(e.to_string()))?;
@@ -120,6 +124,9 @@ pub fn list_peca_files(peca_path: &Path) -> Result<Vec<String>, ArchiveError> {
 
 /// Inspects a `.peca` archive and builds its `PackageFileIndex` in memory.
 pub fn generate_package_file_index(peca_path: &Path) -> Result<PackageFileIndex, ArchiveError> {
+    let span = info_span!("generate_package_file_index", peca = %peca_path.display());
+    let _enter = span.enter();
+    debug!("Generating PackageFileIndex from archive");
     let manifest = read_manifest_from_peca(peca_path)?;
     let files = list_peca_files(peca_path)?;
     Ok(PackageFileIndex::new(
@@ -140,6 +147,7 @@ pub fn save_package_vfi_cache(
     let cache_file = vfi_cache_dir.join(format!("{sanitized_name}.vfi.json"));
     let json = index.to_json()?;
     fs::write(&cache_file, json)?;
+    debug!(package = %index.package_name, path = %cache_file.display(), "Persisted package VFI cache");
     Ok(cache_file)
 }
 
@@ -153,6 +161,7 @@ pub fn load_package_vfi_cache(
     if !cache_file.exists() {
         return Ok(None);
     }
+    trace!(package = %package_name, path = %cache_file.display(), "Loading package VFI cache");
     let content = fs::read_to_string(cache_file)?;
     let index = PackageFileIndex::from_json(&content)?;
     Ok(Some(index))
@@ -166,6 +175,14 @@ pub fn create_peca(
     output_path: &Path,
     compression_level: i32,
 ) -> Result<Manifest, ArchiveError> {
+    let span =
+        info_span!("create_peca", source = %source_dir.display(), output = %output_path.display());
+    let _enter = span.enter();
+    debug!(
+        compression_level = compression_level,
+        "Creating .peca archive"
+    );
+
     let manifest_path = source_dir.join(MANIFEST_FILENAME);
     if !manifest_path.exists() {
         return Err(ArchiveError::MissingManifest);
@@ -196,6 +213,7 @@ pub fn create_peca(
         .finish()
         .map_err(|e| ArchiveError::Compression(e.to_string()))?;
 
+    debug!(mod_name = %manifest.package.name, version = %manifest.package.version, "Finished creating .peca archive");
     Ok(manifest)
 }
 
@@ -207,6 +225,10 @@ pub fn extract_peca_stream<R: Read>(
     reader: R,
     destination_dir: &Path,
 ) -> Result<(Manifest, PackageFileIndex), ArchiveError> {
+    let span = info_span!("extract_peca_stream", destination = %destination_dir.display());
+    let _enter = span.enter();
+    trace!("Extracting archive stream into destination directory");
+
     fs::create_dir_all(destination_dir)?;
 
     let decoder =
@@ -245,12 +267,16 @@ pub fn extract_peca_stream<R: Read>(
         indexed_files,
     );
 
+    debug!(mod_name = %manifest.package.name, version = %manifest.package.version, files_count = index.files.len(), "Stream extraction complete");
     Ok((manifest, index))
 }
 
 /// Extracts a `.peca` archive from disk to `destination_dir`.
 /// Validates that a root `peri.toml` exists upon extraction and returns the parsed manifest.
 pub fn extract_peca(peca_path: &Path, destination_dir: &Path) -> Result<Manifest, ArchiveError> {
+    let span = info_span!("extract_peca", peca = %peca_path.display(), destination = %destination_dir.display());
+    let _enter = span.enter();
+    debug!("Extracting .peca archive file from disk");
     let file = File::open(peca_path)?;
     let buf_reader = BufReader::new(file);
     let (manifest, _) = extract_peca_stream(buf_reader, destination_dir)?;
