@@ -1,34 +1,44 @@
-# Rust build artifacts
-/target/
-**/*.rs.bk
-*.bk
-*.orig
+# 1. Deny every file everywhere by default
+*
 
-# Perihelion local caches and artifacts
-.perihelion/
-*.peca
-prototyping/
+# 2. Allow Git to walk directories to discover tracked files
+!*/
 
-# Mise local configuration
-.mise.local.toml
+# Root configuration & dotfiles
+!/.gitignore
+!/.gitattributes
+!/.editorconfig
+!/.lefthook.yml
+!/Cargo.lock
+!/LICENSE*
 
-# IDE and Editor files
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.DS_Store
+# Global configuration formats
+!*.toml
+!*.yml
+!*.yaml
 
-# AI Agent Memory & Scratchpads (untracked)
-.ai/
-AGENTS.md
-CLAUDE.md
-.cursorrules
-.cursor/
+# Root documentation & legal assets
+!/README.md
+!/CHANGELOG.md
+!/CONTRIBUTING.md
+!/CODE_OF_CONDUCT.md
+!/SECURITY.md
+!/TRADEMARK.md
+!/LICENSE
+!/LICENSE-CC-BY-4.0
+!/cc.by.png
+!/gplv3.webp
 
-# Python caches
+# Allowed project directory trees
+!/docs/**
+!/crates/**
+!/common/**
+!/apps/**
+!/assets/**
+!/scripts/**
+!/tests/**
+!/benches/**
+
+# Exclude generated caches inside allowed subtrees
 __pycache__/
-*.py[cod]
-
-
+**/.perihelion/
