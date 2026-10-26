@@ -2,6 +2,9 @@
 publish = false
 git_only = true
 git_release_enable = false
+changelog_update = false
+release_always = false
+pr_branch_prefix = "release-"
 git_tag_enable = false
 
 # Single lockstep tag (vX.Y.Z) so cargo-dist's `v*` trigger fires once.
@@ -9,4 +12,5 @@ git_tag_enable = false
 name = "peri"
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
+changelog_update = true
 changelog_path = "CHANGELOG.md"
