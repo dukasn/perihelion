@@ -70,7 +70,7 @@ impl SessionDraft {
     pub fn compute_manifest_hash(manifest_content: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(manifest_content.as_bytes());
-        format!("{:x}", hasher.finalize())
+        hex::encode(hasher.finalize())
     }
 
     /// Serializes this draft to a JSON string.

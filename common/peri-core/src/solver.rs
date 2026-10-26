@@ -161,12 +161,14 @@ pub fn solve_dependencies(
     for (pkg_name, releases) in &catalog.packages {
         for (ver, manifest) in releases {
             let pubgrub_ver = to_pubgrub_version(ver);
-            let mut deps = DependencyConstraints::<String, Ranges<SemanticVersion>>::default();
-
-            for (dep_name, req_str) in &manifest.dependencies {
-                let req = VersionReq::parse(req_str).unwrap_or(VersionReq::STAR);
-                deps.insert(dep_name.clone(), version_req_to_ranges(&req));
-            }
+            let deps: DependencyConstraints<String, Ranges<SemanticVersion>> = manifest
+                .dependencies
+                .iter()
+                .map(|(dep_name, req_str)| {
+                    let req = VersionReq::parse(req_str).unwrap_or(VersionReq::STAR);
+                    (dep_name.clone(), version_req_to_ranges(&req))
+                })
+                .collect();
 
             provider.add_dependencies(pkg_name.clone(), pubgrub_ver, deps);
         }
@@ -175,12 +177,13 @@ pub fn solve_dependencies(
     // 2. Define virtual root package for the workspace
     let root_pkg = "__workspace_root__".to_string();
     let root_ver = SemanticVersion::new(1, 0, 0);
-    let mut root_deps = DependencyConstraints::<String, Ranges<SemanticVersion>>::default();
-
-    for (dep_name, req_str) in root_dependencies {
-        let req = VersionReq::parse(req_str).unwrap_or(VersionReq::STAR);
-        root_deps.insert(dep_name.clone(), version_req_to_ranges(&req));
-    }
+    let root_deps: DependencyConstraints<String, Ranges<SemanticVersion>> = root_dependencies
+        .iter()
+        .map(|(dep_name, req_str)| {
+            let req = VersionReq::parse(req_str).unwrap_or(VersionReq::STAR);
+            (dep_name.clone(), version_req_to_ranges(&req))
+        })
+        .collect();
     provider.add_dependencies(root_pkg.clone(), root_ver, root_deps);
 
     // 3. Resolve using PubGrub CDCL algorithm
