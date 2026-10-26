@@ -43,8 +43,6 @@ jobs:
 
   advisories:
     runs-on: ubuntu-latest
-    # Transitive advisories (via librqbit) must not block merges.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
