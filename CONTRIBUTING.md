@@ -187,6 +187,9 @@ fix(vfs): resolve mount order precedence in multi-layer overlay
 docs: update layout mapping guide in README
 ```
 
+### Automated Releases & Versioning
+Perihelion automatically calculates version bumps, updates changelogs, records preview tapes, and builds binary distributions via `release-plz` and `cargo-dist`. Refer to [Project Distribution & Release Architecture](docs/PROJECT_DISTRIBUTION.md) for details on pre-1.0 SemVer mechanics, release workflows, and binary packaging.
+
 ---
 
 ## 7. Code of Conduct
