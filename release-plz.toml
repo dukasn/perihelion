@@ -1,0 +1,11 @@
+[workspace]
+publish = false
+git_release_enable = false
+git_tag_enable = false
+
+# Single lockstep tag (vX.Y.Z) so cargo-dist's `v*` trigger fires once.
+[[package]]
+name = "peri"
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+changelog_path = "CHANGELOG.md"

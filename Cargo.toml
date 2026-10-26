@@ -16,6 +16,7 @@ edition = "2021"
 authors = ["Eduardo Marques Santos", "Perihelion Contributors"]
 license = "GPL-3.0-or-later"
 repository = "https://github.com/dukasn/perihelion"
+publish = false
 
 [workspace.dependencies]
 # Internal domain and crates
@@ -61,4 +62,9 @@ tempfile = "3.17"
 librqbit = { version = "9.0" }
 shellexpand = "3.1"
 directories = "6.0"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 

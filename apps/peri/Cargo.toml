@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "peri"
@@ -29,3 +31,6 @@ semver.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
+
+[package.metadata.dist]
+dist = true
