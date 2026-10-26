@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/dukasn/perihelion/compare/v0.1.1...v0.1.2) - 2026-10-26
+
+### Added
+
+- *(helion)* implement customizable themes, real-time preview, and responsive footer
+- *(ci)* automate terminal recordings with VHS and release-plz integration
+- *(cli)* enhance help messages and styling across peri, perid, and helion
+
+### Other
+
+- *(logging)* add structured tracing spans and env filter across core crates and CLI binaries
+- *(cargo)* prepare crates for public release with metadata and production profiles
+- overhaul project and crate documentation
+
 ## [0.1.1](https://github.com/dukasn/perihelion/compare/v0.1.0...v0.1.1) - 2026-10-26
 
 ### Changed
