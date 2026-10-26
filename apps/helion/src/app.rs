@@ -15,7 +15,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use peri_core::{
-    manifest::{Manifest, Priority},
+    draft::{SessionDraft, StagedChanges, UiContext},
+    manifest::{Manifest, OverrideRule, Priority},
     profile::{GameProfile, LayoutMapping},
     vfi::VirtualFileIndex,
 };
@@ -25,6 +26,8 @@ use crate::action::{
     Action, ConflictsFocus, DownloadsFocus, InputValidation, ModsFocus, OverviewFocus,
     ProfilesFocus, StatusLevel, Tab,
 };
+use crate::worker::{PersistenceCommand, WorkerSender};
+use tokio::sync::mpsc as tokio_mpsc;
 
 #[derive(Debug, Clone)]
 pub enum DownloadMessage {
@@ -147,6 +150,13 @@ pub struct ProfileItem {
     pub diagnostic: DiagnosticAlert,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveGameHandle {
+    pub pid: u32,
+    pub game_id: String,
+    pub snapshot_id: String,
+}
+
 #[derive(Debug)]
 pub struct App {
     pub active_tab: Tab,
@@ -193,6 +203,11 @@ pub struct App {
     pub status_message: Option<String>,
     pub status_level: StatusLevel,
     pub should_quit: bool,
+    pub canonical_manifest: Option<Manifest>,
+    pub staged: StagedChanges,
+    pub active_session: Option<ActiveGameHandle>,
+    pub worker_tx: Option<WorkerSender>,
+    pub session_tx: Option<tokio_mpsc::Sender<PersistenceCommand>>,
 }
 
 impl Default for App {
@@ -249,6 +264,11 @@ impl App {
             status_message: None,
             status_level: StatusLevel::Info,
             should_quit: false,
+            canonical_manifest: None,
+            staged: StagedChanges::default(),
+            active_session: None,
+            worker_tx: None,
+            session_tx: None,
         };
 
         app.discover_system_and_profiles();
@@ -1016,6 +1036,7 @@ impl App {
             Err(_) => return,
         };
 
+        self.canonical_manifest = Some(manifest.clone());
         self.game_title = format!("{} [{}]", manifest.target.game_id, manifest.package.name);
 
         let mut found = false;
@@ -1633,18 +1654,21 @@ impl App {
                 if !filtered.is_empty() {
                     let idx = self.cursor_index.min(filtered.len().saturating_sub(1));
                     let real_idx = filtered[idx].0;
-                    self.mods[real_idx].active = !self.mods[real_idx].active;
-                    let name = self.mods[real_idx].name.clone();
-                    let is_on = self.mods[real_idx].active;
+                    let mod_id = self.mods[real_idx].id.clone();
+                    let is_on = !self.mods[real_idx].active;
+                    self.mods[real_idx].active = is_on;
+                    self.staged.stage_toggle(mod_id.clone(), is_on);
+                    self.notify_draft_changed();
+                    let delta = self.staged.delta_count();
                     if is_on {
                         self.set_status(
                             StatusLevel::Success,
-                            format!("Enabled '{}' in OverlayFS stack", name),
+                            format!("Staged ENABLE for '{}' ({} pending edits)", mod_id, delta),
                         );
                     } else {
                         self.set_status(
                             StatusLevel::Warning,
-                            format!("Disabled '{}' (unmounted from VFS plan)", name),
+                            format!("Staged DISABLE for '{}' ({} pending edits)", mod_id, delta),
                         );
                     }
                 }
@@ -1656,16 +1680,28 @@ impl App {
                     let any_inactive = indices.iter().any(|&i| !self.mods[i].active);
                     for i in &indices {
                         self.mods[*i].active = any_inactive;
+                        let mod_id = self.mods[*i].id.clone();
+                        self.staged.stage_toggle(mod_id, any_inactive);
                     }
+                    self.notify_draft_changed();
+                    let delta = self.staged.delta_count();
                     if any_inactive {
                         self.set_status(
                             StatusLevel::Success,
-                            format!("Enabled all {} visible packages", indices.len()),
+                            format!(
+                                "Staged ENABLE all {} packages ({} pending edits)",
+                                indices.len(),
+                                delta
+                            ),
                         );
                     } else {
                         self.set_status(
                             StatusLevel::Warning,
-                            format!("Disabled all {} visible packages", indices.len()),
+                            format!(
+                                "Staged DISABLE all {} packages ({} pending edits)",
+                                indices.len(),
+                                delta
+                            ),
                         );
                     }
                 }
@@ -1685,10 +1721,16 @@ impl App {
                         Priority::Absolute => Priority::Lowest,
                     };
                     self.mods[real_idx].priority = next;
-                    let name = self.mods[real_idx].name.clone();
+                    let mod_id = self.mods[real_idx].id.clone();
+                    self.staged.stage_priority(mod_id.clone(), next);
+                    self.notify_draft_changed();
+                    let delta = self.staged.delta_count();
                     self.set_status(
                         StatusLevel::Info,
-                        format!("Updated '{}' priority tier to {:?}", name, next),
+                        format!(
+                            "Staged priority {:?} for '{}' ({} pending edits)",
+                            next, mod_id, delta
+                        ),
                     );
                 }
             }
@@ -1707,10 +1749,16 @@ impl App {
                         Priority::Absolute => Priority::Highest,
                     };
                     self.mods[real_idx].priority = prev;
-                    let name = self.mods[real_idx].name.clone();
+                    let mod_id = self.mods[real_idx].id.clone();
+                    self.staged.stage_priority(mod_id.clone(), prev);
+                    self.notify_draft_changed();
+                    let delta = self.staged.delta_count();
                     self.set_status(
                         StatusLevel::Info,
-                        format!("Updated '{}' priority tier to {:?}", name, prev),
+                        format!(
+                            "Staged priority {:?} for '{}' ({} pending edits)",
+                            prev, mod_id, delta
+                        ),
                     );
                 }
             }
@@ -1868,10 +1916,17 @@ impl App {
                         self.conflicts_focus = ConflictsFocus::OptionB;
                         self.conflicts[index].option_b.mod_name.clone()
                     };
-                    self.conflicts[index].winner_id = Some(winner_id);
+                    self.conflicts[index].winner_id = Some(winner_id.clone());
+                    self.staged
+                        .stage_conflict_winner(path.clone(), winner_id.clone());
+                    self.notify_draft_changed();
+                    let delta = self.staged.delta_count();
                     self.set_status(
                         StatusLevel::Success,
-                        format!("Selected '{}' as winning layer for {}", winner_name, path),
+                        format!(
+                            "Selected '{}' for {} ({} pending edits)",
+                            winner_name, path, delta
+                        ),
                     );
                 }
             }
@@ -2423,6 +2478,17 @@ impl App {
                 }
             }
             Action::LaunchGame => {
+                if let Some(active) = &self.active_session {
+                    self.set_status(
+                        StatusLevel::Info,
+                        format!(
+                            "Game is already running (PID {}). Press 'r' to restart.",
+                            active.pid
+                        ),
+                    );
+                    return;
+                }
+
                 let workspace = Path::new(".");
                 let manifest_path = workspace.join("peri.toml");
                 if !manifest_path.exists() {
@@ -2436,16 +2502,64 @@ impl App {
                         let exec = active_profile
                             .map(|p| p.executable.clone())
                             .unwrap_or_else(|| "game.exe".to_string());
+                        let profile_name = active_profile
+                            .map(|p| p.name.clone())
+                            .unwrap_or_else(|| "default".to_string());
 
-                        self.set_status(
-                            StatusLevel::Success,
-                            format!(
-                                ">> Launching {} ({}) with OverlayFS stack ({} active mods)",
-                                manifest.target.game_id,
-                                exec,
-                                self.mods.iter().filter(|m| m.active).count()
-                            ),
+                        let active_layers: Vec<PathBuf> = self
+                            .mods
+                            .iter()
+                            .filter(|m| m.active)
+                            .map(|m| PathBuf::from(".perihelion/cache/mods").join(&m.id))
+                            .collect();
+
+                        let vfs_plan = peri_vfs::VfsPlan::new(
+                            PathBuf::from("."),
+                            PathBuf::from(format!(
+                                ".perihelion/profiles/{}/merged",
+                                manifest.target.game_id
+                            )),
+                        )
+                        .with_layers(active_layers)
+                        .with_upper(
+                            PathBuf::from(format!(
+                                ".perihelion/profiles/{}/upper",
+                                manifest.target.game_id
+                            )),
+                            PathBuf::from(format!(
+                                ".perihelion/profiles/{}/work",
+                                manifest.target.game_id
+                            )),
                         );
+
+                        if let Some(tx) = &self.worker_tx {
+                            crate::worker::spawn_game_supervisor(
+                                PathBuf::from("."),
+                                manifest.target.game_id.clone(),
+                                profile_name,
+                                exec.clone(),
+                                vec![],
+                                Some(vfs_plan),
+                                tx.clone(),
+                            );
+                            self.set_status(
+                                StatusLevel::Info,
+                                format!(
+                                    "Launching {} ({}) in isolated namespace...",
+                                    manifest.target.game_id, exec
+                                ),
+                            );
+                        } else {
+                            self.set_status(
+                                StatusLevel::Success,
+                                format!(
+                                    ">> Launching {} ({}) with OverlayFS stack ({} active mods)",
+                                    manifest.target.game_id,
+                                    exec,
+                                    self.mods.iter().filter(|m| m.active).count()
+                                ),
+                            );
+                        }
                     }
                 }
             }
@@ -2502,6 +2616,273 @@ impl App {
                 }
             }
             Action::Render => {}
+            Action::SessionRestored(draft) => {
+                self.restore_from_draft(&draft);
+            }
+            Action::RecoveryConflictDetected {
+                on_disk_hash,
+                draft_hash,
+            } => {
+                self.set_status(
+                    StatusLevel::Warning,
+                    format!(
+                        "External edit detected! Manifest on disk ({:.8}) differs from saved draft ({:.8}).",
+                        on_disk_hash, draft_hash
+                    ),
+                );
+            }
+            Action::StageToggle { mod_id, active } => {
+                if let Some(m) = self.mods.iter_mut().find(|m| m.id == mod_id) {
+                    m.active = active;
+                }
+                self.staged.stage_toggle(mod_id, active);
+                self.notify_draft_changed();
+            }
+            Action::StagePriority { mod_id, priority } => {
+                if let Some(m) = self.mods.iter_mut().find(|m| m.id == mod_id) {
+                    m.priority = priority;
+                }
+                self.staged.stage_priority(mod_id, priority);
+                self.notify_draft_changed();
+            }
+            Action::StageConflictWinner { path, winning_mod } => {
+                if let Some(c) = self.conflicts.iter_mut().find(|c| c.file_path == path) {
+                    c.winner_id = Some(winning_mod.clone());
+                }
+                self.staged.stage_conflict_winner(path, winning_mod);
+                self.notify_draft_changed();
+            }
+            Action::CommitDraftToDisk => {
+                if self.staged.is_empty() {
+                    self.set_status(StatusLevel::Info, "No staged modifications to commit.");
+                } else {
+                    let manifest_path = Path::new("peri.toml");
+                    if !manifest_path.exists() {
+                        self.set_status(
+                            StatusLevel::Error,
+                            "Cannot commit draft: 'peri.toml' not found in workspace.",
+                        );
+                    } else if let Ok(content) = std::fs::read_to_string(manifest_path) {
+                        if let Ok(mut manifest) = Manifest::from_toml_str(&content) {
+                            for (mod_id, prio) in &self.staged.priorities {
+                                manifest.overrides.insert(
+                                    mod_id.clone(),
+                                    OverrideRule::Priority { priority: *prio },
+                                );
+                            }
+                            for (path, winner_id) in &self.staged.manual_conflict_resolutions {
+                                manifest.overrides.insert(
+                                    format!("path:{}", path),
+                                    OverrideRule::Target(winner_id.clone()),
+                                );
+                            }
+                            match manifest.to_toml_str() {
+                                Ok(serialized) => {
+                                    if std::fs::write(manifest_path, serialized).is_ok() {
+                                        let committed_count = self.staged.delta_count();
+                                        self.canonical_manifest = Some(manifest);
+                                        self.staged.clear();
+                                        if let Some(tx) = &self.session_tx {
+                                            let _ = tx.try_send(PersistenceCommand::PurgeDraft);
+                                        }
+                                        self.set_status(
+                                            StatusLevel::Success,
+                                            format!(
+                                                "Committed {} staged edits to peri.toml. Restart game to apply.",
+                                                committed_count
+                                            ),
+                                        );
+                                    } else {
+                                        self.set_status(
+                                            StatusLevel::Error,
+                                            "Failed to write committed manifest to disk.",
+                                        );
+                                    }
+                                }
+                                Err(err) => {
+                                    self.set_status(
+                                        StatusLevel::Error,
+                                        format!("Failed to serialize manifest: {}", err),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Action::DiscardDraft => {
+                if self.staged.is_empty() {
+                    self.set_status(StatusLevel::Info, "Draft buffer is already empty.");
+                } else {
+                    self.staged.clear();
+                    if let Some(tx) = &self.session_tx {
+                        let _ = tx.try_send(PersistenceCommand::PurgeDraft);
+                    }
+                    self.try_load_workspace();
+                    self.set_status(
+                        StatusLevel::Warning,
+                        "Discarded all uncommitted staged modifications.",
+                    );
+                }
+            }
+            Action::LaunchGameTriggered => {
+                self.handle_action(Action::LaunchGame);
+            }
+            Action::GameStarted { pid, snapshot_id } => {
+                let game_id = self
+                    .canonical_manifest
+                    .as_ref()
+                    .map(|m| m.target.game_id.clone())
+                    .unwrap_or_else(|| "game".into());
+                self.active_session = Some(ActiveGameHandle {
+                    pid,
+                    game_id,
+                    snapshot_id: snapshot_id.clone(),
+                });
+                self.notify_draft_changed();
+                self.set_status(
+                    StatusLevel::Success,
+                    format!("[● GAME RUNNING: PID {}] (Snapshot: {})", pid, snapshot_id),
+                );
+            }
+            Action::GameTerminated { exit_code } => {
+                let prev_pid = self.active_session.take().map(|s| s.pid);
+                self.notify_draft_changed();
+                let code_str = exit_code
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "0".to_string());
+                self.set_status(
+                    StatusLevel::Info,
+                    format!(
+                        "Game terminated (PID {:?}, exit code: {}). Workspace idle.",
+                        prev_pid, code_str
+                    ),
+                );
+            }
+            Action::RestartGameRequested => {
+                if let Some(active) = &self.active_session {
+                    let pid = active.pid;
+                    let _ = crate::worker::terminate_process(pid);
+                    self.set_status(
+                        StatusLevel::Warning,
+                        format!("Sent SIGTERM to PID {}. Hot-restart requested.", pid),
+                    );
+                } else {
+                    self.handle_action(Action::LaunchGame);
+                }
+            }
+            Action::DagSolved {
+                ordered_mod_ids,
+                has_cycles,
+            } => {
+                if has_cycles {
+                    self.set_status(
+                        StatusLevel::Error,
+                        "Cycle detected in mod dependency graph! Resolve load order.",
+                    );
+                } else {
+                    self.set_status(
+                        StatusLevel::Info,
+                        format!(
+                            "DAG resolved successfully ({} mods ordered).",
+                            ordered_mod_ids.len()
+                        ),
+                    );
+                }
+            }
+            Action::VfiScanCompleted { collision_count } => {
+                if collision_count > 0 {
+                    self.set_status(
+                        StatusLevel::Warning,
+                        format!("VFI scan detected {} file collisions.", collision_count),
+                    );
+                } else {
+                    self.set_status(
+                        StatusLevel::Success,
+                        "VFI scan clean: Zero file collisions detected across active mods.",
+                    );
+                }
+            }
+        }
+    }
+
+    /// Restores UI context and staged modifications from a persisted session draft.
+    pub fn restore_from_draft(&mut self, draft: &SessionDraft) {
+        self.active_tab = Tab::from_index(draft.ui_context.active_tab_index);
+        self.cursor_index = draft.ui_context.cursor_row;
+        self.search_query = draft.ui_context.active_search_query.clone();
+        self.category_filter = draft.ui_context.selected_category_filter.clone();
+        self.show_inspector = draft.ui_context.inspector_drawer_open;
+
+        for (mod_id, &active) in &draft.staged_changes.toggles {
+            if let Some(m) = self.mods.iter_mut().find(|m| m.id == *mod_id) {
+                m.active = active;
+            }
+        }
+
+        for (mod_id, &priority) in &draft.staged_changes.priorities {
+            if let Some(m) = self.mods.iter_mut().find(|m| m.id == *mod_id) {
+                m.priority = priority;
+            }
+        }
+
+        for (path, winner_id) in &draft.staged_changes.manual_conflict_resolutions {
+            if let Some(c) = self.conflicts.iter_mut().find(|c| c.file_path == *path) {
+                c.winner_id = Some(winner_id.clone());
+            }
+        }
+
+        self.staged = draft.staged_changes.clone();
+        let delta_count = draft.staged_changes.delta_count();
+        self.set_status(
+            StatusLevel::Success,
+            format!("Restored active session ({} staged edits)", delta_count),
+        );
+    }
+
+    /// Constructs a `SessionDraft` snapshot from the current in-memory state.
+    pub fn build_session_draft(&self) -> SessionDraft {
+        let base_hash = if let Ok(content) = std::fs::read_to_string("peri.toml") {
+            SessionDraft::compute_manifest_hash(&content)
+        } else {
+            String::new()
+        };
+
+        let mut draft = SessionDraft::new(base_hash);
+        draft.timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        draft.staged_changes = self.staged.clone();
+        draft.ui_context = UiContext {
+            active_tab_index: self.active_tab.index(),
+            cursor_row: self.cursor_index,
+            active_search_query: self.search_query.clone(),
+            selected_category_filter: self.category_filter.clone(),
+            inspector_drawer_open: self.show_inspector,
+        };
+        if let Some(active) = &self.active_session {
+            draft.active_execution = Some(peri_core::draft::ExecutionSessionMetadata {
+                pid: active.pid,
+                game_id: active.game_id.clone(),
+                profile_name: self
+                    .profiles
+                    .iter()
+                    .find(|p| p.is_active)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default(),
+                snapshot_id: active.snapshot_id.clone(),
+                launched_at: draft.timestamp,
+            });
+        }
+        draft
+    }
+
+    /// Dispatches a persistence update command to the background session recorder worker.
+    pub fn notify_draft_changed(&self) {
+        if let Some(tx) = &self.session_tx {
+            let draft = self.build_session_draft();
+            let _ = tx.try_send(PersistenceCommand::UpdateDraft(Box::new(draft)));
         }
     }
 }
@@ -2816,5 +3197,74 @@ mod tests {
         assert_eq!(app.profiles.len(), 4);
         assert_eq!(app.game_title, "Starfield [NASAPunk Explorers]");
         assert_eq!(app.profiles[3].steam_app_id, 1716740);
+    }
+
+    #[test]
+    fn test_restore_from_draft() {
+        let mut app = App::new();
+        let mut draft = SessionDraft::new("dummy_hash");
+        draft.ui_context.active_tab_index = 1;
+        draft.ui_context.cursor_row = 3;
+        draft.ui_context.active_search_query = "sky".to_string();
+        draft.ui_context.selected_category_filter = Some("Visuals".to_string());
+        draft.ui_context.inspector_drawer_open = false;
+
+        app.handle_action(Action::SessionRestored(Box::new(draft)));
+
+        assert_eq!(app.active_tab, Tab::Mods);
+        assert_eq!(app.cursor_index, 3);
+        assert_eq!(app.search_query, "sky");
+        assert_eq!(app.category_filter, Some("Visuals".to_string()));
+        assert!(!app.show_inspector);
+        assert!(app.status_message.is_some());
+    }
+
+    #[test]
+    fn test_transactional_staging_lifecycle() {
+        let mut app = App::new();
+        app.populate_test_fixture();
+        assert!(app.staged.is_empty());
+
+        // Stage mod toggle
+        app.handle_action(Action::ToggleMod);
+        assert_eq!(app.staged.delta_count(), 1);
+        assert!(app.staged.toggles.contains_key("ussep"));
+
+        // Stage priority cycle
+        app.handle_action(Action::CyclePriority);
+        assert_eq!(app.staged.delta_count(), 2);
+        assert!(app.staged.priorities.contains_key("ussep"));
+
+        // Stage conflict winner
+        app.handle_action(Action::ResolveConflictChoice {
+            index: 0,
+            winner_id: "skyui".to_string(),
+        });
+        assert_eq!(app.staged.delta_count(), 3);
+
+        // Discard all staged changes
+        app.handle_action(Action::DiscardDraft);
+        assert!(app.staged.is_empty());
+        assert_eq!(app.staged.delta_count(), 0);
+    }
+
+    #[test]
+    fn test_game_supervision_lifecycle() {
+        let mut app = App::new();
+        assert!(app.active_session.is_none());
+
+        // Simulate game started
+        app.handle_action(Action::GameStarted {
+            pid: 41209,
+            snapshot_id: "snap_0xabcd".to_string(),
+        });
+        assert!(app.active_session.is_some());
+        let session = app.active_session.as_ref().unwrap();
+        assert_eq!(session.pid, 41209);
+        assert_eq!(session.snapshot_id, "snap_0xabcd");
+
+        // Simulate game terminated
+        app.handle_action(Action::GameTerminated { exit_code: Some(0) });
+        assert!(app.active_session.is_none());
     }
 }

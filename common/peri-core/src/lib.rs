@@ -21,6 +21,7 @@
 //! game layout profiles, and strict domain errors.
 
 pub mod config;
+pub mod draft;
 pub mod error;
 pub mod graph;
 pub mod lockfile;
@@ -31,6 +32,10 @@ pub mod solver;
 pub mod vfi;
 
 pub use config::{GlobalConfig, NetworkConfig, StorageConfig, CONFIG_FILENAME};
+pub use draft::{
+    ExecutionSessionMetadata, SessionDraft, StagedChanges, UiContext, DRAFT_FILENAME,
+    DRAFT_SCHEMA_VERSION, DRAFT_TMP_FILENAME,
+};
 pub use error::{ConfigError, ManifestError, ProfileError, ResolveError, SecurityError};
 pub use graph::{DependencyGraph, EdgeType};
 pub use lockfile::{LockedPackage, Lockfile, LOCKFILE_FILENAME};

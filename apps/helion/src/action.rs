@@ -14,6 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use peri_core::draft::SessionDraft;
+use peri_core::manifest::Priority;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Overview,
@@ -141,7 +144,10 @@ pub enum Action {
     FilterCategory(Option<String>),
     CycleCategory,
     CycleCategoryReverse,
-    ResolveConflictChoice { index: usize, winner_id: String },
+    ResolveConflictChoice {
+        index: usize,
+        winner_id: String,
+    },
     ToggleConflictWinner,
     AutoResolveConflicts,
     SelectProfile(usize),
@@ -163,4 +169,55 @@ pub enum Action {
     LaunchGame,
     ToggleHelp,
     CloseModal,
+
+    // ----------------------------------------------------
+    // Transactional Draft Lifecycle
+    // ----------------------------------------------------
+    StageToggle {
+        mod_id: String,
+        active: bool,
+    },
+    StagePriority {
+        mod_id: String,
+        priority: Priority,
+    },
+    StageConflictWinner {
+        path: String,
+        winning_mod: String,
+    },
+    CommitDraftToDisk,
+    DiscardDraft,
+
+    // ----------------------------------------------------
+    // Asynchronous Engine Responses (From Tokio Workers)
+    // ----------------------------------------------------
+    DagSolved {
+        ordered_mod_ids: Vec<String>,
+        has_cycles: bool,
+    },
+    VfiScanCompleted {
+        collision_count: usize,
+    },
+
+    // ----------------------------------------------------
+    // Execution & Sandbox Lifecycle
+    // ----------------------------------------------------
+    LaunchGameTriggered,
+    GameStarted {
+        pid: u32,
+        snapshot_id: String,
+    },
+    GameTerminated {
+        exit_code: Option<i32>,
+    },
+    RestartGameRequested,
+
+    // ----------------------------------------------------
+    // Diagnostics, Error & Recovery
+    // ----------------------------------------------------
+    SessionRestored(Box<SessionDraft>),
+    RecoveryConflictDetected {
+        on_disk_hash: String,
+        draft_hash: String,
+    },
 }

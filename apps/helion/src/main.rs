@@ -25,17 +25,10 @@ use std::io::stdout;
 use std::panic;
 use std::time::Duration;
 
-mod action;
-mod app;
-pub mod autocomplete;
-mod event;
-mod theme;
-mod ui;
-mod views;
-
-use action::{Action, ModsFocus, ProfilesFocus, Tab};
-use app::App;
-use event::{Event, EventHandler};
+use helion::action::{Action, ModsFocus, ProfilesFocus, Tab};
+use helion::app::App;
+use helion::event::{Event, EventHandler};
+use helion::{ui, worker};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -57,25 +50,72 @@ async fn main() -> Result<()> {
         .map_err(|e| miette::miette!("Failed to initialize terminal: {}", e))?;
 
     let mut app = App::new();
-    let mut events = EventHandler::new(Duration::from_millis(50));
 
-    // Main TUI Event Loop
+    // Startup Session Recovery Flow (Crash-Resilient Session Restoration)
+    if let Some(recovery) = worker::check_recovery_draft(std::path::Path::new(".")).await {
+        match recovery {
+            worker::RecoveryStatus::CleanResume(draft) => {
+                app.handle_action(Action::SessionRestored(draft));
+            }
+            worker::RecoveryStatus::Conflict {
+                on_disk_hash,
+                draft_hash,
+                ..
+            } => {
+                app.handle_action(Action::RecoveryConflictDetected {
+                    on_disk_hash,
+                    draft_hash,
+                });
+            }
+        }
+    }
+
+    // Detached Process Recovery: Check if a game process was left running across terminal restarts
+    if let Some(active) = worker::check_active_game_session(std::path::Path::new(".")) {
+        app.handle_action(Action::GameStarted {
+            pid: active.pid,
+            snapshot_id: active.snapshot_id,
+        });
+    }
+
+    // Initialize asynchronous worker channel and session recorder
+    let (worker_tx, mut worker_rx) = worker::create_worker_channel();
+    let (session_tx, _session_recorder_handle) =
+        worker::spawn_session_recorder(std::path::PathBuf::from("."));
+
+    app.worker_tx = Some(worker_tx);
+    app.session_tx = Some(session_tx);
+
+    let mut events = EventHandler::new();
+    let mut frame_timer = tokio::time::interval(Duration::from_millis(16)); // 60 FPS (16.6ms)
+    frame_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    // Decoupled 60 FPS Presentation Loop
     while !app.should_quit {
-        terminal
-            .draw(|f| ui::render_ui(f, &app))
-            .map_err(|e| miette::miette!("Failed to draw frame: {}", e))?;
+        tokio::select! {
+            // Strict 60 FPS frame tick: pump status/tick actions and redraw presentation layer
+            _ = frame_timer.tick() => {
+                app.handle_action(Action::Tick);
+                terminal
+                    .draw(|f| ui::render_ui(f, &app))
+                    .map_err(|e| miette::miette!("Failed to draw frame: {}", e))?;
+            }
 
-        if let Some(event) = events.next().await {
-            match event {
-                Event::Tick => {
-                    app.handle_action(Action::Tick);
+            // Asynchronous crossterm keyboard and resize events from raw terminal stream
+            Some(event) = events.next() => {
+                match event {
+                    Event::Key(key) => {
+                        handle_key_event(&mut app, key);
+                    }
+                    Event::Resize(_, _) => {
+                        app.handle_action(Action::Render);
+                    }
                 }
-                Event::Resize(_, _) => {
-                    app.handle_action(Action::Render);
-                }
-                Event::Key(key) => {
-                    handle_key_event(&mut app, key);
-                }
+            }
+
+            // Asynchronous payloads and computed graph results from background Tokio actors
+            Some(worker_msg) = worker_rx.recv() => {
+                app.handle_action(worker_msg);
             }
         }
     }
@@ -406,12 +446,24 @@ fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('r') => {
             if app.active_tab == Tab::Conflicts {
                 app.handle_action(Action::AutoResolveConflicts);
+            } else {
+                app.handle_action(Action::RestartGameRequested);
             }
         }
 
         // Launch Game (F9 or Shift+L)
         KeyCode::F(9) | KeyCode::Char('L') => {
             app.handle_action(Action::LaunchGame);
+        }
+
+        // Commit Draft / Apply Staged Changes (F5)
+        KeyCode::F(5) => {
+            app.handle_action(Action::CommitDraftToDisk);
+        }
+
+        // Discard Staged Changes (Shift+D)
+        KeyCode::Char('D') => {
+            app.handle_action(Action::DiscardDraft);
         }
 
         _ => {}

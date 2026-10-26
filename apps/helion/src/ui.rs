@@ -26,7 +26,7 @@ use crate::{
     action::{StatusLevel, Tab},
     app::App,
     theme::{
-        COLOR_AMBER, COLOR_BORDER_SUBTLE, COLOR_CYAN, COLOR_RED, COLOR_TEXT_MUTED,
+        COLOR_AMBER, COLOR_BORDER_SUBTLE, COLOR_CYAN, COLOR_GREEN, COLOR_RED, COLOR_TEXT_MUTED,
         COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
     },
     views::{
@@ -78,11 +78,13 @@ pub fn render_ui(f: &mut Frame, app: &App) {
 }
 
 fn render_header(f: &mut Frame, app: &App, bar_area: Rect, sep_area: Rect) {
+    let delta = app.staged.delta_count();
+    let right_len = if delta > 0 { 38 } else { 16 };
     let header_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Min(40),    // Standard Ratatui Tabs (1:Overview | 2:Mods [5] | ...)
-            Constraint::Length(14), // Right-aligned "F9 Launch "
+            Constraint::Min(40),           // Standard Ratatui Tabs
+            Constraint::Length(right_len), // Right-aligned Staged + Launch CTA
         ])
         .split(bar_area);
 
@@ -205,18 +207,42 @@ fn render_header(f: &mut Frame, app: &App, bar_area: Rect, sep_area: Rect) {
 
     f.render_widget(tabs, header_chunks[0]);
 
-    // Right-aligned clean Launch CTA
-    let launch_line = Line::from(vec![
-        Span::styled(
-            "F9",
+    // Right-aligned Launch CTA & Pending Staged Indicator
+    let mut right_spans = Vec::new();
+    let delta = app.staged.delta_count();
+    if delta > 0 {
+        right_spans.push(Span::styled(
+            format!("[{} PENDING (*)] ", delta),
             Style::default()
-                .fg(COLOR_TEXT_PRIMARY)
+                .fg(COLOR_AMBER)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" Launch ", Style::default().fg(COLOR_TEXT_SECONDARY)),
-    ]);
+        ));
+        right_spans.push(Span::styled(
+            "[F5 Apply] ",
+            Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD),
+        ));
+    }
+    if let Some(active) = &app.active_session {
+        right_spans.push(Span::styled(
+            format!("[● PID {}] ", active.pid),
+            Style::default()
+                .fg(COLOR_GREEN)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    right_spans.push(Span::styled(
+        "F9",
+        Style::default()
+            .fg(COLOR_TEXT_PRIMARY)
+            .add_modifier(Modifier::BOLD),
+    ));
+    right_spans.push(Span::styled(
+        " Launch ",
+        Style::default().fg(COLOR_TEXT_SECONDARY),
+    ));
+
     f.render_widget(
-        Paragraph::new(launch_line).alignment(Alignment::Right),
+        Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right),
         header_chunks[1],
     );
 
@@ -278,10 +304,21 @@ fn render_footer(f: &mut Frame, app: &App, sep_area: Rect, footer_area: Rect) {
     } else {
         let active_count = app.mods.iter().filter(|m| m.active).count();
         let total_mods = app.mods.len();
-        left_spans.push(Span::styled(
-            format!("{} of {} Mods Active (0 cycles)", active_count, total_mods),
-            Style::default().fg(COLOR_TEXT_SECONDARY),
-        ));
+        let delta = app.staged.delta_count();
+        if delta > 0 {
+            left_spans.push(Span::styled(
+                format!(
+                    "{} of {} Mods Active | {} Staged Edits (*) [F5 Apply / Shift+D Discard]",
+                    active_count, total_mods, delta
+                ),
+                Style::default().fg(COLOR_AMBER),
+            ));
+        } else {
+            left_spans.push(Span::styled(
+                format!("{} of {} Mods Active (0 cycles)", active_count, total_mods),
+                Style::default().fg(COLOR_TEXT_SECONDARY),
+            ));
+        }
     }
 
     f.render_widget(Paragraph::new(Line::from(left_spans)), footer_chunks[0]);

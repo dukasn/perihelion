@@ -51,7 +51,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tokio = { version = "1.43", features = ["full"] }
 
 # System, Archive & Network adapters
-nix = { version = "0.29", features = ["mount", "sched", "user", "fs"] }
+nix = { version = "0.29", features = ["mount", "sched", "user", "fs", "signal"] }
 tar = "0.4"
 zstd = { version = "0.13", features = ["zstdmt"] }
 sha2 = "0.10"

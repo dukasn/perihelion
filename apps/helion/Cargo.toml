@@ -6,6 +6,10 @@ authors.workspace = true
 license.workspace = true
 description = "Perihelion Native Terminal User Interface"
 
+[lib]
+name = "helion"
+path = "src/lib.rs"
+
 [[bin]]
 name = "helion"
 path = "src/main.rs"
@@ -25,7 +29,12 @@ tracing-subscriber.workspace = true
 miette.workspace = true
 thiserror.workspace = true
 directories.workspace = true
+nix.workspace = true
 clap.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
