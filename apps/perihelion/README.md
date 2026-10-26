@@ -13,6 +13,8 @@ This crate produces three binaries:
 
 The command-line interface for headless mod management, continuous integration checks, and isolated game launching.
 
+![Peri CLI Quickstart](../../assets/demos/peri-quickstart.gif)
+
 ### Subcommands
 
 ```text
@@ -87,6 +89,8 @@ systemctl --user enable --now perid.service
 ## `helion`: The TUI Dashboard
 
 Terminal user interface launcher. It hooks terminal panics to restore raw mode cleanly on exit, then hands control over to the interactive event loop.
+
+![Helion Interactive TUI Dashboard](../../assets/demos/helion-dashboard.gif)
 
 ```bash
 # Launch interactive TUI in current workspace

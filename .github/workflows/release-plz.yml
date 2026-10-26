@@ -37,7 +37,47 @@ jobs:
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: release-plz/action@v0.5
+        id: release-plz
         with:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Setup VHS & Developer Fonts
+        if: steps.release-plz.outputs.prs_created == 'true'
+        uses: charmbracelet/vhs-action@v2
+        with:
+          install-fonts: 'true'
+
+      - name: Record terminal demos and commit to release PR
+        if: steps.release-plz.outputs.prs_created == 'true'
+        env:
+          PR_DATA: ${{ steps.release-plz.outputs.pr }}
+        run: |
+          PR_BRANCH=$(echo "$PR_DATA" | jq -r '(.head_branch // .prs[0].head_branch // empty)')
+          if [ -z "$PR_BRANCH" ]; then
+            git fetch origin
+            PR_BRANCH=$(git branch -r --list 'origin/release-*' --sort=-committerdate | head -n1 | sed 's| *origin/||')
+          fi
+
+          if [ -z "$PR_BRANCH" ]; then
+            echo "No release branch found. Skipping VHS demo recording."
+            exit 0
+          fi
+
+          echo "Switching to release branch: $PR_BRANCH"
+          git fetch origin "$PR_BRANCH":"$PR_BRANCH"
+          git checkout "$PR_BRANCH"
+
+          echo "Building binaries and recording VHS tapes..."
+          ./scripts/record-demos.sh
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add assets/demos/*.gif
+          if ! git diff --cached --quiet; then
+            git commit -m "docs(demo): refresh automated terminal previews for release"
+            git push origin "$PR_BRANCH"
+          else
+            echo "No visual demo diff detected."
+          fi

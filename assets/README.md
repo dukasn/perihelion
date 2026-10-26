@@ -7,6 +7,10 @@ This directory contains official visual assets, brand marks, and artwork for the
 - `perihelion-banner.webp` / `perihelion-banner.png`: Project banner illustration.
 - `perihelion-logo.svg` / `perihelion-logo.png`: Main logo mark.
 - `perihelion-vector.svg` / `perihelion-vector-dark.svg`: Vector icon variants for light/dark themes.
+- `vhs/`: VHS terminal recording tapes (`.tape`) and documentation.
+- `demos/`: Automated terminal recording GIFs generated with [VHS](https://github.com/charmbracelet/vhs) via [`./vhs`](./vhs).
+  - `peri-quickstart.gif`: CLI initialization and DAG check workflow.
+  - `helion-dashboard.gif`: Interactive TUI dashboard navigation.
 
 ## License
 

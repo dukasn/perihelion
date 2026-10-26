@@ -69,6 +69,8 @@ A keyboard-driven dashboard for live workspace curation:
 - **Live Collision Inspector:** Side-by-side file collision view showing winning layers and instant override toggles.
 - **P2P Swarm Monitor:** Live transfer speeds, swarm health indicators, and background download queues.
 
+![Helion Interactive TUI Dashboard](./assets/demos/helion-dashboard.gif)
+
 Launch `helion` in any workspace:
 ```bash
 cargo run -p helion
@@ -76,6 +78,8 @@ cargo run -p helion
 
 ### 2. `peri` — The Headless CLI
 High-performance command-line utility for scripting, headless setups, and automated testing:
+
+![Peri CLI Quickstart](./assets/demos/peri-quickstart.gif)
 
 ```bash
 # Initialize a workspace mapped to Cyberpunk 2077

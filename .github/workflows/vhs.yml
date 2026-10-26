@@ -1,0 +1,71 @@
+name: VHS Terminal Previews
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_changes:
+        description: "Commit newly generated GIFs back to branch"
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - 'assets/vhs/**'
+      - 'docs/vhs/**'
+      - 'scripts/record-demos.sh'
+      - '.github/workflows/vhs.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'assets/vhs/**'
+      - 'docs/vhs/**'
+      - 'scripts/record-demos.sh'
+
+jobs:
+  record-demos:
+    name: Record Terminal Demos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Enable sccache
+        run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+
+      - name: Setup VHS & Developer Fonts
+        uses: charmbracelet/vhs-action@v2
+        with:
+          install-fonts: 'true'
+
+      - name: Build binaries & record VHS tapes
+        run: |
+          ./scripts/record-demos.sh
+
+      - name: Upload generated preview recordings
+        uses: actions/upload-artifact@v4
+        with:
+          name: vhs-terminal-previews
+          path: assets/demos/*.gif
+
+      - name: Auto-commit updated demos
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.commit_changes)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add assets/demos/*.gif
+          if ! git diff --cached --quiet; then
+            git commit -m "docs(demo): refresh automated VHS recordings [skip ci]"
+            git push origin ${{ github.ref_name }}
+          else
+            echo "No visual demo changes detected."
+          fi
+
