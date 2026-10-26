@@ -1,9 +1,45 @@
 # Perihelion Toolchain Configuration via mise
+# https://mise.jdx.dev
+
 [tools]
 rust = "stable"
 sccache = "latest"
 lefthook = "latest"
+cargo-deny = "latest"
+cargo-dist = "latest"
+release-plz = "latest"
+vhs = "latest"
+ttyd = "latest"
+ffmpeg = "latest"
 
 [env]
 RUST_BACKTRACE = "1"
+_.path = ["~/.local/bin", "~/.cargo/bin"]
 
+[tasks.bootstrap]
+description = "Fully bootstrap and link all developer tooling"
+run = "./scripts/bootstrap.sh"
+
+[tasks.check]
+description = "Run full quality gate: unit tests, clippy, and code formatting"
+run = "cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+
+[tasks.test]
+description = "Run workspace unit tests"
+run = "cargo test --workspace"
+
+[tasks.lint]
+description = "Run clippy with zero warnings policy"
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks.fmt]
+description = "Check and auto-format Rust code"
+run = "cargo fmt --all"
+
+[tasks.record]
+description = "Record authentic VHS terminal previews for README"
+run = "./scripts/record-demos.sh"
+
+[tasks.deny]
+description = "Audit dependencies for licenses, bans, and advisories"
+run = "cargo deny check"

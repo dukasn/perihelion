@@ -34,8 +34,10 @@ Template files intended for downstream distribution packaging (such as `perid.se
 
 | File | Purpose | License |
 | :--- | :--- | :--- |
+| [`bootstrap.sh`](./bootstrap.sh) | Automated toolchain installer and diagnostics bootstrapper via `mise`. | GPL-3.0-or-later |
 | [`check_license_headers.py`](./check_license_headers.py) | Scans and enforces GPLv3 headers on `.rs` files and CC BY 4.0 marks on `.svg` assets. | GPL-3.0-or-later |
 | [`generate_banner.py`](./generate_banner.py) | Procedural repository banner generator for WebP and PNG assets. | GPL-3.0-or-later *(outputs CC BY 4.0)* |
+| [`record-demos.sh`](./record-demos.sh) | Automated VHS terminal tape recorder for compiling preview GIFs. | GPL-3.0-or-later *(outputs CC BY 4.0)* |
 | [`perid.service`](./perid.service) | Systemd user service unit template for the background seeding daemon. | CC0 / Permissive template |
 
 ---

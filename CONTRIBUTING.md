@@ -86,10 +86,28 @@ By submitting a Pull Request or patch to this repository, you certify that:
 
 ## 4. Development Environment & Setup
 
-### Prerequisites
-- **Rust Toolchain:** Stable Rust (edition 2021, Rust 1.80+ recommended).
-- **Tooling:** `cargo`, `rustfmt`, and `clippy`.
-- Optional environment manager: [mise-en-place](https://mise.jdx.dev/) (`mise install`).
+### Quick Start (Automated Bootstrap)
+You can configure and verify the complete toolchain in one command:
+```bash
+./scripts/bootstrap.sh
+```
+Or via [mise](https://mise.jdx.dev/):
+```bash
+mise run bootstrap
+```
+This automatically manages and pins:
+- Stable Rust with `clippy` and `rustfmt`
+- `sccache` compiler caching acceleration
+- `lefthook` Git pre-commit hooks
+- `cargo-deny` license & advisory checker
+- `cargo-dist` & `release-plz` release packaging
+- `vhs`, `ttyd` & `ffmpeg` terminal demo recording suite
+- Headless browser sandbox compatibility wrappers for containerized/Flatpak environments
+
+To verify toolchain health at any time:
+```bash
+./scripts/bootstrap.sh --check
+```
 
 ### Environment Notes & Sandboxing
 - If developing inside containerized or Flatpak development environments (e.g., VSCode Flatpak on Silverblue/Bazzite), **do not** use `flatpak-spawn --host` for compiler wrappers or `sccache`. `flatpak-spawn` strips cargo environment variables (`CARGO_PKG_VERSION`, `CARGO_MANIFEST_DIR`), which breaks proc-macro compilation.
