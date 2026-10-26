@@ -12,17 +12,20 @@ members = [
 [workspace.package]
 version = "0.1.1"
 edition = "2021"
+rust-version = "1.80"
 authors = ["Eduardo Marques Santos", "Perihelion Contributors"]
 license = "GPL-3.0-or-later"
 repository = "https://github.com/dukasn/perihelion"
-publish = false
+homepage = "https://github.com/dukasn/perihelion"
+publish = true
 
 [workspace.dependencies]
 # Internal domain and crates
-peri-core = { path = "common/peri-core" }
-peri-vfs = { path = "crates/peri-vfs" }
-peri-net = { path = "crates/peri-net" }
-peri-archive = { path = "crates/peri-archive" }
+peri-core = { path = "common/peri-core", version = "0.1.1" }
+peri-vfs = { path = "crates/peri-vfs", version = "0.1.1" }
+peri-net = { path = "crates/peri-net", version = "0.1.1" }
+peri-archive = { path = "crates/peri-archive", version = "0.1.1" }
+helion = { path = "apps/helion", version = "0.1.1" }
 
 # Serialization & Manifest parsing
 serde = { version = "1.0", features = ["derive"] }
@@ -62,10 +65,21 @@ librqbit = { version = "9.0.1", default-features = false, features = ["rust-tls"
 shellexpand = "3.1"
 directories = "6.0"
 
+# Production release profile
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+# Speed up external dependencies during debug builds
+[profile.dev.package."*"]
+opt-level = 2
 
 [patch.crates-io]
 librqbit-utp = { git = "https://github.com/ikatson/librqbit-utp" }

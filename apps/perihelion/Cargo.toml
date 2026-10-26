@@ -2,11 +2,16 @@
 name = "perihelion"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 publish.workspace = true
-description = "Perihelion: peri CLI, perid seeding daemon and helion TUI"
+readme = "README.md"
+description = "Next-generation game-agnostic native Linux mod manager and VFS orchestrator"
+keywords = ["mod-manager", "overlayfs", "gaming", "linux", "cli"]
+categories = ["command-line-utilities", "filesystem", "virtualization"]
 
 [package.metadata.dist]
 dist = true
@@ -24,7 +29,7 @@ name = "helion"
 path = "src/bin/helion/main.rs"
 
 [dependencies]
-helion = { path = "../helion" }
+helion.workspace = true
 peri-core.workspace = true
 peri-vfs.workspace = true
 peri-net = { workspace = true, features = ["bittorrent"] }

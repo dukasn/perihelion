@@ -2,9 +2,16 @@
 name = "peri-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 publish.workspace = true
+readme = "README.md"
+description = "Pure functional domain models, PubGrub dependency solver, and Virtual File Index for Perihelion"
+keywords = ["modding", "pubgrub", "vfs", "dag", "perihelion"]
+categories = ["data-structures", "algorithms", "development-tools"]
 
 [dependencies]
 serde.workspace = true

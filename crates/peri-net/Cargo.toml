@@ -2,9 +2,16 @@
 name = "peri-net"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 publish.workspace = true
+readme = "README.md"
+description = "P2P BitTorrent swarm and HTTP streaming network transport adapter for Perihelion"
+keywords = ["bittorrent", "torrent", "p2p", "streaming", "reqwest"]
+categories = ["network-programming", "asynchronous"]
 
 [dependencies]
 peri-core.workspace = true

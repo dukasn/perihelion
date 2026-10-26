@@ -2,11 +2,16 @@
 name = "helion"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 publish.workspace = true
-description = "Perihelion Native Terminal User Interface"
+readme = "README.md"
+description = "Terminal User Interface (TUI) engine and interactive dashboard for Perihelion"
+keywords = ["tui", "ratatui", "crossterm", "terminal", "dashboard"]
+categories = ["command-line-interface", "visualization"]
 
 [lib]
 name = "helion"

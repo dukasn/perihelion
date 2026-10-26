@@ -2,9 +2,16 @@
 name = "peri-archive"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 publish.workspace = true
+readme = "README.md"
+description = "Perihelion Compressed Archive (.peca) packaging, streaming zstd decompression, and validation"
+keywords = ["archive", "zstd", "tar", "peca", "compression"]
+categories = ["compression", "filesystem"]
 
 [dependencies]
 peri-core.workspace = true
