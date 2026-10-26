@@ -32,6 +32,7 @@ Perihelion separates the functional domain from system operations through a stri
 perihelion/
 ├── apps/
 │   ├── peri/             # High-speed CLI shell (clap, miette, tokio)
+│   ├── perid/            # Official background seeding & orchestration daemon
 │   └── helion/           # Terminal-native interactive TUI dashboard (ratatui, crossterm)
 ├── crates/
 │   ├── peri-vfs/         # Adapter: Linux OverlayFS & unprivileged namespaces (nix)
@@ -95,6 +96,17 @@ peri run
 | `peri run` | Spawns the isolated namespace, mounts OverlayFS, and launches the game |
 | `peri config` | Inspects or edits global configuration (`~/.config/perihelion/config.toml`) |
 
+### 3. `perid` — The Official Background Daemon
+A lightweight, low-overhead background daemon that powers P2P BitTorrent swarm seeding and package availability across the community:
+- **Autonomous Swarm Seeding:** Monitors the `.perihelion/cache` repository and automatically seeds `.peca` packages over the BitTorrent DHT network.
+- **Configurable Rate Limits:** Respects user bandwidth policies configured in `~/.config/perihelion/config.toml` or via CLI flags (`--upload-limit`).
+- **Graceful Lifecycle Management:** Designed to run seamlessly in user space or as a `systemd --user` service unit.
+
+Run `perid` with:
+```bash
+cargo run -p perid -- --help
+```
+
 ---
 
 ## Declarative Layout Mappings
@@ -122,18 +134,43 @@ cargo fmt --all --check
 
 # 4. CLI Sanity check
 cargo run -p peri -- --help
+
+# 5. Background daemon sanity check
+cargo run -p perid -- --help
+
+# 6. Helion TUI Sanity check
+cargo run -p helion
 ```
 
+For full details on architecture, toolchain, and contribution standards, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+
 ---
+
+## Community & Policies
+
+- 🤝 **[Contributing Guidelines](./CONTRIBUTING.md):** Architectural invariants, developer workflows, and PR standards.
+- 🏷️ **[Project Naming & Authenticity Policy](./TRADEMARK.md):** Guidelines for forks, distributions, and preventing impersonation.
+- 🛡️ **[Security Policy](./SECURITY.md):** Responsible disclosure process and threat model.
+- 📜 **[Code of Conduct](./CODE_OF_CONDUCT.md):** Community standards and pledge.
+
+---
+
+## License
+
+Perihelion uses a split-licensing model:
+
+- 💻 **Software & Codebase:** Licensed under the [GNU General Public License v3.0 (GPL-3.0-or-later)](./LICENSE).
+- 🎨 **Visual Assets & Media:** All branding, banners, and vector artwork in [`assets/`](./assets) are licensed under the [Creative Commons Attribution 4.0 International (CC BY 4.0)](./LICENSE-CC-BY-4.0).
 
 <br/>
 
 <div align="center">
   <a href="./LICENSE">
-    <img src="./gplv3.webp" alt="GPLv3 License." width="320px" height="auto"/>
+    <img src="./gplv3.webp" alt="GPLv3 License." width="280px" height="auto"/>
   </a>
   <p>
-  Licensed under GPLv3
+    Software licensed under <strong>GPL-3.0-or-later</strong> &bull; Visual assets licensed under <strong>CC-BY-4.0</strong>
   </p>
 </div>
+
 

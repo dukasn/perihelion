@@ -1,3 +1,13 @@
+<!--
+  Perihelion - Game-agnostic native Linux mod manager and VFS orchestrator.
+  Copyright (C) 2026 Eduardo Marques Santos and Perihelion Contributors
+
+  This asset is licensed under the Creative Commons Attribution 4.0
+  International License (CC BY 4.0).
+  You may obtain a copy of the License at:
+  https://creativecommons.org/licenses/by/4.0/
+-->
+
 <svg width="267" height="200" viewBox="0 0 267 200" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M233.333 66.6667H266.667V33.3333H233.333V3.05176e-05H200V33.3333H166.667V66.6667H133.333V100H166.667V133.333H200V100H233.333V66.6667ZM100 66.6667H133.333V33.3333H100V3.05176e-05H66.6667V33.3333H33.3333V66.6667H0V100H33.3333V133.333H66.6667V100H100V66.6667ZM266.667 133.333H200V166.667H233.333V200H266.667V133.333ZM133.333 133.333H66.6667V166.667H100V200H133.333V133.333Z" fill="black"/>
 </svg>

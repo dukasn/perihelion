@@ -13,8 +13,8 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["Perihelion Contributors"]
-license = "MIT OR Apache-2.0"
+authors = ["Eduardo Marques Santos", "Perihelion Contributors"]
+license = "GPL-3.0-or-later"
 repository = "https://github.com/dukasn/perihelion"
 
 [workspace.dependencies]

@@ -1,3 +1,21 @@
+Perihelion Licensing Overview
+==============================
+
+The Perihelion project is open-source and free software, licensed as follows:
+
+1. Software & Codebase (all Rust source files, scripts, manifests, and CLI/TUI tools):
+   Licensed under the GNU General Public License, Version 3 (GPL-3.0-or-later).
+   See the full GPLv3 text below.
+
+2. Visual Assets, Logos, and Media (contents of the `assets/` directory and project artwork):
+   Licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0).
+   See `LICENSE-CC-BY-4.0` or <https://creativecommons.org/licenses/by/4.0/>.
+
+For project naming, authenticity guidelines, and anti-impersonation policy, see `TRADEMARK.md`.
+For contributor guidelines, see `CONTRIBUTING.md`.
+
+==============================================================================
+
                     GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
 

@@ -1,3 +1,13 @@
+<!--
+  Perihelion - Game-agnostic native Linux mod manager and VFS orchestrator.
+  Copyright (C) 2026 Eduardo Marques Santos and Perihelion Contributors
+
+  This asset is licensed under the Creative Commons Attribution 4.0
+  International License (CC BY 4.0).
+  You may obtain a copy of the License at:
+  https://creativecommons.org/licenses/by/4.0/
+-->
+
 <svg width="500" height="500" viewBox="0 0 500 500" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_1118_24)">
 <rect width="500" height="500" fill="black"/>

@@ -1,3 +1,19 @@
+// Perihelion - Game-agnostic native Linux mod manager and VFS orchestrator.
+// Copyright (C) 2026 Eduardo Marques Santos and Perihelion Contributors
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -6,7 +22,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::theme::{keycap, COLOR_BORDER_FOCUSED, COLOR_CYAN, COLOR_SEPARATOR, COLOR_TEXT_PRIMARY};
+use crate::theme::{
+    keycap, COLOR_BORDER_FOCUSED, COLOR_CYAN, COLOR_SEPARATOR, COLOR_TEXT_MUTED, COLOR_TEXT_PRIMARY,
+};
 
 pub fn render_help_modal(f: &mut Frame, area: Rect) {
     let popup_area = centered_rect(68, 78, area);
@@ -113,6 +131,21 @@ pub fn render_help_modal(f: &mut Frame, area: Rect) {
             "F9 / Shift+L",
             "Mount OverlayFS stack & launch game inside isolated namespace",
         ),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "Helion Dashboard",
+                Style::default()
+                    .fg(COLOR_TEXT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" • Created by ", Style::default().fg(COLOR_TEXT_MUTED)),
+            Span::styled("Eduardo Marques Santos", Style::default().fg(COLOR_CYAN)),
+            Span::styled(
+                " & Contributors • GPLv3",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
+        ]),
     ];
 
     let p = Paragraph::new(help_lines).wrap(Wrap { trim: false });
