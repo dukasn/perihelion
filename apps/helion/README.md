@@ -6,6 +6,8 @@ Interactive Terminal User Interface (TUI) engine for Perihelion.
 
 Built on [`ratatui`](https://ratatui.rs/) and [`crossterm`](https://crates.io/crates/crossterm), it combines responsive 60 FPS terminal rendering with non-blocking background worker actors.
 
+![Helion Interactive TUI Dashboard](../../assets/demos/helion-dashboard.gif)
+
 ---
 
 ## Architecture: Actor-Driven TUI

@@ -65,12 +65,32 @@ impl Default for StorageConfig {
     }
 }
 
+fn default_theme() -> String {
+    "terminal".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UiConfig {
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            theme: default_theme(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct GlobalConfig {
     #[serde(default)]
     pub network: NetworkConfig,
     #[serde(default)]
     pub storage: StorageConfig,
+    #[serde(default)]
+    pub ui: UiConfig,
 }
 
 impl GlobalConfig {
@@ -82,6 +102,7 @@ impl GlobalConfig {
             storage: StorageConfig {
                 global_cache_dir: home.join(".local/share/perihelion/cache"),
             },
+            ui: UiConfig::default(),
         }
     }
 
@@ -105,6 +126,7 @@ mod tests {
         let cfg = GlobalConfig::default();
         assert_eq!(cfg.network.daemon_upload_limit_kbs, 1024);
         assert!(cfg.network.enable_dht);
+        assert_eq!(cfg.ui.theme, "terminal");
         assert_eq!(
             cfg.storage.global_cache_dir,
             PathBuf::from("~/.local/share/perihelion/cache")

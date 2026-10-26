@@ -165,6 +165,20 @@ impl Autocomplete {
                 s.completed_text = format!("{}{}", prefix, s.completed_text);
                 return Some(s);
             }
+        } else if lower.starts_with("theme ") {
+            let prefix = "theme ";
+            let arg = &trimmed[prefix.len()..];
+
+            let candidates: Vec<String> = crate::theme::Theme::all_available()
+                .into_iter()
+                .map(|t| t.id)
+                .collect();
+
+            let candidate_refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+            if let Some(mut s) = Self::match_candidate(arg, &candidate_refs) {
+                s.completed_text = format!("{}{}", prefix, s.completed_text);
+                return Some(s);
+            }
         }
 
         None

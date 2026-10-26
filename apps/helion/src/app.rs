@@ -208,6 +208,9 @@ pub struct App {
     pub active_session: Option<ActiveGameHandle>,
     pub worker_tx: Option<WorkerSender>,
     pub session_tx: Option<tokio_mpsc::Sender<PersistenceCommand>>,
+    pub theme: crate::theme::Theme,
+    pub committed_theme: crate::theme::Theme,
+    pub theme_picker_cursor: usize,
 }
 
 impl Default for App {
@@ -219,6 +222,9 @@ impl Default for App {
 impl App {
     pub fn new() -> Self {
         let (download_tx, download_rx) = std::sync::mpsc::channel();
+        let initial_theme = crate::theme::load_configured_theme();
+        crate::theme::set_active_theme(initial_theme.clone());
+
         let mut app = Self {
             active_tab: Tab::Overview,
             overview_focus: OverviewFocus::CommandInput,
@@ -269,11 +275,93 @@ impl App {
             active_session: None,
             worker_tx: None,
             session_tx: None,
+            theme: initial_theme.clone(),
+            committed_theme: initial_theme,
+            theme_picker_cursor: 0,
         };
 
         app.discover_system_and_profiles();
         app.try_load_workspace();
         app
+    }
+
+    pub fn set_theme(&mut self, theme: crate::theme::Theme) {
+        self.theme = theme.clone();
+        self.committed_theme = theme.clone();
+        crate::theme::set_active_theme(theme);
+    }
+
+    pub fn is_theme_command(&self) -> bool {
+        let trimmed = self.overview_input.trim_start();
+        let lower = trimmed.to_ascii_lowercase();
+        lower.starts_with("theme") || lower.starts_with("/theme") || lower.starts_with(":theme")
+    }
+
+    pub fn matching_themes_for_overview(&self) -> Vec<crate::theme::Theme> {
+        let trimmed = self.overview_input.trim_start();
+        let lower = trimmed.to_ascii_lowercase();
+        let all = crate::theme::Theme::all_available();
+
+        let prefix = if lower.starts_with("/theme") {
+            "/theme"
+        } else if lower.starts_with(":theme") {
+            ":theme"
+        } else if lower.starts_with("theme") {
+            "theme"
+        } else {
+            return all;
+        };
+
+        let arg = lower[prefix.len()..].trim();
+        if arg.is_empty() {
+            return all;
+        }
+
+        let filtered: Vec<_> = all
+            .iter()
+            .filter(|t| t.id.contains(arg) || t.name.to_ascii_lowercase().contains(arg))
+            .cloned()
+            .collect();
+
+        if filtered.is_empty() {
+            all
+        } else {
+            filtered
+        }
+    }
+
+    pub fn update_realtime_theme_preview(&mut self) {
+        if self.is_theme_command() {
+            let matches = self.matching_themes_for_overview();
+            if !matches.is_empty() {
+                if self.theme_picker_cursor >= matches.len() {
+                    self.theme_picker_cursor = 0;
+                }
+                let selected = &matches[self.theme_picker_cursor];
+                if self.theme.id != selected.id {
+                    self.theme = selected.clone();
+                    crate::theme::set_active_theme(self.theme.clone());
+                }
+            }
+        } else if self.theme.id != self.committed_theme.id {
+            self.theme = self.committed_theme.clone();
+            crate::theme::set_active_theme(self.theme.clone());
+        }
+    }
+
+    pub fn cycle_theme_preview(&mut self, forward: bool) {
+        let matches = self.matching_themes_for_overview();
+        if matches.is_empty() {
+            return;
+        }
+        let len = matches.len();
+        if forward {
+            self.theme_picker_cursor = (self.theme_picker_cursor + 1) % len;
+        } else {
+            self.theme_picker_cursor = (self.theme_picker_cursor + len - 1) % len;
+        }
+        self.theme = matches[self.theme_picker_cursor].clone();
+        crate::theme::set_active_theme(self.theme.clone());
     }
 
     fn set_status(&mut self, level: StatusLevel, msg: impl Into<String>) {
@@ -297,6 +385,7 @@ impl App {
             {
                 self.overview_input = s.completed_text;
                 self.overview_input_error = None;
+                self.update_realtime_theme_preview();
                 return true;
             }
         } else if self.search_active {
@@ -1415,8 +1504,15 @@ impl App {
                         self.overview_input_active = true;
                     }
                     OverviewFocus::RecentProfiles => {
-                        let idx = self.overview_profile_cursor;
-                        self.handle_action(Action::SelectProfile(idx));
+                        if self.overview_profile_cursor == 4 {
+                            self.overview_input = "theme ".to_string();
+                            self.overview_input_active = true;
+                            self.overview_focus = OverviewFocus::CommandInput;
+                            self.update_realtime_theme_preview();
+                        } else {
+                            let idx = self.overview_profile_cursor;
+                            self.handle_action(Action::SelectProfile(idx));
+                        }
                     }
                 },
                 Tab::Mods => match self.mods_focus {
@@ -1468,11 +1564,15 @@ impl App {
             },
             Action::CursorUp => match self.active_tab {
                 Tab::Overview => {
-                    self.overview_focus = OverviewFocus::RecentProfiles;
-                    if self.overview_profile_cursor > 0 {
-                        self.overview_profile_cursor -= 1;
+                    if self.overview_input_active && self.is_theme_command() {
+                        self.cycle_theme_preview(false);
                     } else {
-                        self.overview_focus = OverviewFocus::CommandInput;
+                        self.overview_focus = OverviewFocus::RecentProfiles;
+                        if self.overview_profile_cursor > 0 {
+                            self.overview_profile_cursor -= 1;
+                        } else {
+                            self.overview_focus = OverviewFocus::CommandInput;
+                        }
                     }
                 }
                 Tab::Mods => match self.mods_focus {
@@ -1514,17 +1614,23 @@ impl App {
                 }
             },
             Action::CursorDown => match self.active_tab {
-                Tab::Overview => match self.overview_focus {
-                    OverviewFocus::CommandInput => {
-                        self.overview_focus = OverviewFocus::RecentProfiles;
-                    }
-                    OverviewFocus::RecentProfiles => {
-                        let total = self.profiles.len().max(4);
-                        if self.overview_profile_cursor + 1 < total {
-                            self.overview_profile_cursor += 1;
+                Tab::Overview => {
+                    if self.overview_input_active && self.is_theme_command() {
+                        self.cycle_theme_preview(true);
+                    } else {
+                        match self.overview_focus {
+                            OverviewFocus::CommandInput => {
+                                self.overview_focus = OverviewFocus::RecentProfiles;
+                            }
+                            OverviewFocus::RecentProfiles => {
+                                let total = self.profiles.len().max(5);
+                                if self.overview_profile_cursor + 1 < total {
+                                    self.overview_profile_cursor += 1;
+                                }
+                            }
                         }
                     }
-                },
+                }
                 Tab::Mods => match self.mods_focus {
                     ModsFocus::Inspector => {
                         let max_files = self
@@ -2204,6 +2310,7 @@ impl App {
                 if self.overview_input_active {
                     self.overview_input.push(c);
                     self.overview_input_error = None;
+                    self.update_realtime_theme_preview();
                 } else if self.search_active {
                     self.handle_action(Action::SearchChar(c));
                 } else if self.download_input_active {
@@ -2218,6 +2325,7 @@ impl App {
                 if self.overview_input_active {
                     self.overview_input.pop();
                     self.overview_input_error = None;
+                    self.update_realtime_theme_preview();
                 } else if self.search_active {
                     self.handle_action(Action::SearchBackspace);
                 } else if self.download_input_active {
@@ -2232,6 +2340,7 @@ impl App {
                 if self.overview_input_active {
                     Self::delete_last_word(&mut self.overview_input);
                     self.overview_input_error = None;
+                    self.update_realtime_theme_preview();
                 } else if self.search_active {
                     Self::delete_last_word(&mut self.search_query);
                     self.search_error = None;
@@ -2248,6 +2357,7 @@ impl App {
                 if self.overview_input_active {
                     self.overview_input.clear();
                     self.overview_input_error = None;
+                    self.update_realtime_theme_preview();
                 } else if self.search_active {
                     self.search_query.clear();
                     self.search_error = None;
@@ -2341,6 +2451,50 @@ impl App {
                     } else if lower == "help" {
                         self.overview_input.clear();
                         self.show_help = true;
+                    } else if lower.starts_with("theme ")
+                        || lower.starts_with("/theme ")
+                        || lower.starts_with(":theme ")
+                        || lower == "theme"
+                        || lower == "/theme"
+                        || lower == ":theme"
+                    {
+                        let target = if lower.starts_with("/theme ") || lower.starts_with(":theme ")
+                        {
+                            trimmed[7..].trim()
+                        } else if lower.starts_with("theme ") {
+                            trimmed[6..].trim()
+                        } else {
+                            ""
+                        };
+
+                        let selected_theme = if !target.is_empty() {
+                            crate::theme::Theme::find_matching(target)
+                        } else {
+                            let matches = self.matching_themes_for_overview();
+                            if !matches.is_empty() {
+                                let idx = self.theme_picker_cursor % matches.len();
+                                Some(matches[idx].clone())
+                            } else {
+                                None
+                            }
+                        };
+
+                        if let Some(t) = selected_theme {
+                            self.set_theme(t.clone());
+                            if let Err(e) = crate::theme::save_configured_theme(&t.id) {
+                                tracing::warn!("Failed to persist theme to config: {}", e);
+                            }
+                            self.set_status(
+                                StatusLevel::Success,
+                                format!("Theme switched to '{}' ({})", t.name, t.id),
+                            );
+                        } else {
+                            self.set_status(
+                                StatusLevel::Warning,
+                                format!("No theme matches '{}'", target),
+                            );
+                        }
+                        self.overview_input.clear();
                     } else if lower.starts_with("magnet:")
                         || lower.starts_with("https://")
                         || lower.ends_with(".peca")
@@ -2462,6 +2616,10 @@ impl App {
                     self.overview_input_active = false;
                     self.overview_input.clear();
                     self.overview_input_error = None;
+                    if self.theme.id != self.committed_theme.id {
+                        self.theme = self.committed_theme.clone();
+                        crate::theme::set_active_theme(self.theme.clone());
+                    }
                 }
                 if self.search_active {
                     self.search_active = false;
@@ -3266,5 +3424,63 @@ mod tests {
         // Simulate game terminated
         app.handle_action(Action::GameTerminated { exit_code: Some(0) });
         assert!(app.active_session.is_none());
+    }
+
+    #[test]
+    fn test_overview_realtime_theme_preview_and_submission() {
+        let mut app = App::new();
+        assert_eq!(app.active_tab, Tab::Overview);
+
+        // Initially terminal theme
+        app.set_theme(crate::theme::Theme::terminal());
+        assert_eq!(app.theme.id, "terminal");
+        assert_eq!(app.committed_theme.id, "terminal");
+
+        // Activate overview command palette
+        app.overview_input_active = true;
+
+        // 1. Type "theme nord"
+        for c in "theme nord".chars() {
+            app.handle_action(Action::InputChar(c));
+        }
+
+        // Live preview immediately switches active theme to "nord"
+        assert_eq!(app.theme.id, "nord");
+        // But committed theme is still "terminal"
+        assert_eq!(app.committed_theme.id, "terminal");
+
+        // 2. Press Esc (CancelInput) -> Reverts live preview to committed theme
+        app.handle_action(Action::CancelInput);
+        assert_eq!(app.theme.id, "terminal");
+        assert_eq!(app.overview_input, "");
+        assert!(!app.overview_input_active);
+
+        // 3. Reactivate and type "theme " to trigger list
+        app.overview_input_active = true;
+        for c in "theme ".chars() {
+            app.handle_action(Action::InputChar(c));
+        }
+
+        // Cycle through themes with CursorDown
+        let initial_preview = app.theme.id.clone();
+        app.handle_action(Action::CursorDown);
+        let second_preview = app.theme.id.clone();
+        assert_ne!(initial_preview, second_preview);
+
+        // Cycle back with CursorUp
+        app.handle_action(Action::CursorUp);
+        assert_eq!(app.theme.id, initial_preview);
+
+        // 4. Submit with Enter -> Commits theme
+        app.overview_input = "theme dracula".to_string();
+        app.update_realtime_theme_preview();
+        assert_eq!(app.theme.id, "dracula");
+
+        app.handle_action(Action::SubmitInput);
+        assert_eq!(app.committed_theme.id, "dracula");
+        assert_eq!(app.theme.id, "dracula");
+        assert_eq!(app.status_level, StatusLevel::Success);
+        assert!(!app.overview_input_active);
+        assert_eq!(app.overview_input, "");
     }
 }

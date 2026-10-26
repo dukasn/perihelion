@@ -308,6 +308,12 @@ fn render_idle_cockpit(f: &mut Frame, app: &App, area: Rect) {
         "Download package archive (.peca / magnet)".to_string()
     };
 
+    // Theme palette summary
+    let theme_subtitle = format!(
+        "Active: {} ({}) — Type 'theme' to switch",
+        app.theme.name, app.theme.id
+    );
+
     let actions = [
         ("[1]", ">", action1_title, action1_sub),
         (
@@ -332,6 +338,12 @@ fn render_idle_cockpit(f: &mut Frame, app: &App, area: Rect) {
             "Download Package Archive (.peca)".to_string(),
             curated_subtitle,
         ),
+        (
+            "[5]",
+            "@",
+            "Switch Theme Palette".to_string(),
+            theme_subtitle,
+        ),
     ];
 
     let mut lines = Vec::new();
@@ -347,7 +359,7 @@ fn render_idle_cockpit(f: &mut Frame, app: &App, area: Rect) {
         ),
         Span::raw(" "),
         Span::styled(
-            "(Press 1-4 or use Up/Down + Enter)",
+            "(Press 1-5 or use Up/Down + Enter)",
             Style::default().fg(COLOR_TEXT_MUTED),
         ),
     ]));
@@ -397,41 +409,6 @@ fn render_idle_cockpit(f: &mut Frame, app: &App, area: Rect) {
         }
     }
 
-    // Breathing room / separator
-    lines.push(Line::raw(""));
-
-    // Section 2: Current Readiness
-    lines.push(Line::from(vec![
-        Span::raw("   "),
-        Span::styled(
-            "CURRENT READINESS",
-            Style::default()
-                .fg(COLOR_TEXT_SECONDARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]));
-
-    lines.push(Line::from(vec![
-        Span::raw("   "),
-        Span::styled(
-            "* ",
-            Style::default()
-                .fg(COLOR_GREEN)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "Safe Sandbox Active (Base files locked Read-Only)",
-            Style::default().fg(COLOR_TEXT_PRIMARY),
-        ),
-        Span::styled("  |  ", Style::default().fg(COLOR_TEXT_MUTED)),
-        Span::styled(&app.proton_version, Style::default().fg(COLOR_TEXT_PRIMARY)),
-        Span::styled("  |  ", Style::default().fg(COLOR_TEXT_MUTED)),
-        Span::styled(
-            "Dependencies Clean",
-            Style::default().fg(COLOR_TEXT_SECONDARY),
-        ),
-    ]));
-
     f.render_widget(Paragraph::new(lines), area);
 }
 
@@ -450,7 +427,13 @@ fn render_active_results(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    // 2. Profile switcher or 'switch' / 'profile' verb
+    // 2. Theme picker & live preview
+    if lower.starts_with("theme") || lower.starts_with("/theme") || lower.starts_with(":theme") {
+        render_theme_picker(f, app, area, &lower);
+        return;
+    }
+
+    // 3. Profile switcher or 'switch' / 'profile' verb
     if lower.starts_with("switch")
         || lower.starts_with("profile")
         || app.profiles.iter().any(|p| {
@@ -571,6 +554,130 @@ fn render_detected_package(f: &mut Frame, app: &App, area: Rect, url_or_slug: &s
             ),
         ]),
     ];
+
+    f.render_widget(Paragraph::new(lines), area);
+}
+
+fn render_theme_picker(f: &mut Frame, app: &App, area: Rect, _lower: &str) {
+    let matching = app.matching_themes_for_overview();
+    let mut lines = Vec::new();
+
+    lines.push(Line::from(vec![
+        Span::raw("   "),
+        Span::styled(
+            "THEME PALETTE SELECTION",
+            Style::default()
+                .fg(COLOR_TEXT_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(
+                "                                          ({} themes, Up/Down to preview, Enter to apply)",
+                matching.len()
+            ),
+            Style::default().fg(COLOR_TEXT_MUTED),
+        ),
+    ]));
+
+    let cursor_idx = app.theme_picker_cursor;
+
+    for (pos, theme) in matching.iter().enumerate() {
+        let is_selected = pos == cursor_idx % matching.len().max(1);
+        let prefix = if is_selected { " > " } else { "   " };
+        let icon = if theme.id == app.committed_theme.id {
+            "[*]"
+        } else {
+            "[ ]"
+        };
+
+        let id_padded = format!("{:<12}", theme.id);
+        let name_padded = format!("{:<18}", theme.name);
+
+        if is_selected {
+            let row_style = style_selected_row();
+            let dim_style = style_selected_row_secondary();
+            let status_badge = if theme.id == app.committed_theme.id {
+                Span::styled("[Active]", dim_style)
+            } else {
+                Span::styled("[Enter to Apply]", row_style)
+            };
+
+            let inner_width = (area.width as usize).saturating_sub(4);
+            let used = 3 + 3 + 1 + 12 + 1 + 18 + 1 + 14 + 1 + theme.description.len() + 1 + 18;
+            let trailing_spaces = inner_width.saturating_sub(used).min(60);
+            let trailing_fill = " ".repeat(trailing_spaces);
+
+            lines.push(Line::from(vec![
+                Span::styled(prefix, row_style),
+                Span::styled(icon, row_style),
+                Span::styled(" ", row_style),
+                Span::styled(id_padded, row_style),
+                Span::styled(" ", row_style),
+                Span::styled(name_padded, row_style),
+                Span::styled(" ", row_style),
+                Span::styled("■ ", Style::default().fg(theme.selection_bg())),
+                Span::styled("■ ", Style::default().fg(theme.focus())),
+                Span::styled("■ ", Style::default().fg(theme.cyan())),
+                Span::styled("■ ", Style::default().fg(theme.green())),
+                Span::styled("■ ", Style::default().fg(theme.amber())),
+                Span::styled("■ ", Style::default().fg(theme.red())),
+                Span::styled("■ ", Style::default().fg(theme.border_normal())),
+                Span::styled(" ", row_style),
+                Span::styled(&theme.description, dim_style),
+                Span::styled(trailing_fill, row_style),
+                status_badge,
+            ]));
+        } else {
+            let status_badge = if theme.id == app.committed_theme.id {
+                Span::styled(
+                    "[Active]",
+                    Style::default()
+                        .fg(COLOR_GREEN)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::raw("        ")
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(COLOR_TEXT_MUTED)),
+                Span::styled(icon, Style::default().fg(COLOR_TEXT_MUTED)),
+                Span::raw(" "),
+                Span::styled(
+                    id_padded,
+                    Style::default()
+                        .fg(COLOR_FOCUS)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::styled(name_padded, Style::default().fg(COLOR_TEXT_PRIMARY)),
+                Span::raw(" "),
+                Span::styled("■ ", Style::default().fg(theme.selection_bg())),
+                Span::styled("■ ", Style::default().fg(theme.focus())),
+                Span::styled("■ ", Style::default().fg(theme.cyan())),
+                Span::styled("■ ", Style::default().fg(theme.green())),
+                Span::styled("■ ", Style::default().fg(theme.amber())),
+                Span::styled("■ ", Style::default().fg(theme.red())),
+                Span::styled("■ ", Style::default().fg(theme.border_normal())),
+                Span::raw(" "),
+                Span::styled(
+                    &theme.description,
+                    Style::default().fg(COLOR_TEXT_SECONDARY),
+                ),
+                Span::raw("  "),
+                status_badge,
+            ]));
+        }
+    }
+
+    lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::raw("   "),
+        Span::styled(
+            "Tip: Colors update instantly on navigation. Press Enter to lock in or Esc to revert.",
+            Style::default().fg(COLOR_TEXT_MUTED),
+        ),
+    ]));
 
     f.render_widget(Paragraph::new(lines), area);
 }

@@ -56,6 +56,13 @@ async fn main() -> Result<()> {
 
     let mut app = App::new();
 
+    // Apply initial theme if specified via CLI
+    if let Some(theme_name) = &args.theme {
+        if let Some(t) = helion::theme::Theme::find_matching(theme_name) {
+            app.set_theme(t);
+        }
+    }
+
     // Apply initial tab if specified via CLI
     if let Some(tab_name) = &args.tab {
         let initial_tab = match tab_name.to_lowercase().as_str() {

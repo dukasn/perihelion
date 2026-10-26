@@ -60,6 +60,10 @@ pub struct HelionArgs {
     #[arg(short, long, value_name = "TAB", help_heading = "View Options")]
     pub tab: Option<String>,
 
+    /// Theme to apply on launch (terminal, campbell, catppuccin, tokyo-night, nord, dracula, gruvbox)
+    #[arg(long, value_name = "THEME", help_heading = "Theme Options")]
+    pub theme: Option<String>,
+
     /// Ignore uncommitted crash recovery drafts and discard dirty session journals
     #[arg(long, help_heading = "Recovery Options")]
     pub no_recovery: bool,

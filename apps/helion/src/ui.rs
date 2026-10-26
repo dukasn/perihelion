@@ -262,9 +262,140 @@ fn render_footer(f: &mut Frame, app: &App, sep_area: Rect, footer_area: Rect) {
     ));
     f.render_widget(Paragraph::new(sep_line), sep_area);
 
+    let (cursor_pos, cursor_total) = match app.active_tab {
+        Tab::Overview => (app.overview_profile_cursor + 1, 5),
+        Tab::Mods => {
+            let len = app.filtered_mods().len();
+            (if len == 0 { 0 } else { app.cursor_index + 1 }, len)
+        }
+        Tab::Conflicts => {
+            let len = app.conflicts.len();
+            (
+                if len == 0 {
+                    0
+                } else {
+                    app.active_conflict_cursor + 1
+                },
+                len,
+            )
+        }
+        Tab::Downloads => {
+            let len = app.downloads.len();
+            (if len == 0 { 0 } else { app.download_cursor + 1 }, len)
+        }
+        Tab::Profiles => {
+            let len = app.profiles.len();
+            (if len == 0 { 0 } else { app.profile_cursor + 1 }, len)
+        }
+    };
+
+    let mut right_spans = Vec::new();
+    if footer_area.width >= 115 {
+        right_spans.push(Span::styled(
+            format!("Row {}/{}", cursor_pos, cursor_total),
+            Style::default().fg(COLOR_TEXT_SECONDARY),
+        ));
+        right_spans.push(Span::styled(
+            "  |  ",
+            Style::default().fg(COLOR_BORDER_SUBTLE),
+        ));
+        right_spans.push(Span::styled(
+            &app.proton_version,
+            Style::default().fg(COLOR_TEXT_SECONDARY),
+        ));
+        right_spans.push(Span::styled(
+            "  |  ",
+            Style::default().fg(COLOR_BORDER_SUBTLE),
+        ));
+        right_spans.push(Span::styled(
+            "[hold ",
+            Style::default().fg(COLOR_TEXT_MUTED),
+        ));
+        right_spans.push(Span::styled(
+            "?",
+            Style::default()
+                .fg(COLOR_TEXT_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ));
+        right_spans.push(Span::styled(
+            " for hotkeys] ",
+            Style::default().fg(COLOR_TEXT_MUTED),
+        ));
+    } else if footer_area.width >= 90 {
+        right_spans.push(Span::styled(
+            format!("Row {}/{}", cursor_pos, cursor_total),
+            Style::default().fg(COLOR_TEXT_SECONDARY),
+        ));
+        right_spans.push(Span::styled(
+            "  |  ",
+            Style::default().fg(COLOR_BORDER_SUBTLE),
+        ));
+        right_spans.push(Span::styled(
+            &app.proton_version,
+            Style::default().fg(COLOR_TEXT_SECONDARY),
+        ));
+        right_spans.push(Span::styled(
+            "  |  ",
+            Style::default().fg(COLOR_BORDER_SUBTLE),
+        ));
+        right_spans.push(Span::styled("[", Style::default().fg(COLOR_TEXT_MUTED)));
+        right_spans.push(Span::styled(
+            "?",
+            Style::default()
+                .fg(COLOR_TEXT_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ));
+        right_spans.push(Span::styled(
+            " Hotkeys] ",
+            Style::default().fg(COLOR_TEXT_MUTED),
+        ));
+    } else if footer_area.width >= 70 {
+        right_spans.push(Span::styled(
+            format!("Row {}/{}", cursor_pos, cursor_total),
+            Style::default().fg(COLOR_TEXT_SECONDARY),
+        ));
+        right_spans.push(Span::styled(
+            "  |  ",
+            Style::default().fg(COLOR_BORDER_SUBTLE),
+        ));
+        right_spans.push(Span::styled("[", Style::default().fg(COLOR_TEXT_MUTED)));
+        right_spans.push(Span::styled(
+            "?",
+            Style::default()
+                .fg(COLOR_TEXT_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ));
+        right_spans.push(Span::styled(
+            " Hotkeys] ",
+            Style::default().fg(COLOR_TEXT_MUTED),
+        ));
+    } else if footer_area.width >= 50 {
+        right_spans.push(Span::styled(
+            format!("Row {}/{}", cursor_pos, cursor_total),
+            Style::default().fg(COLOR_TEXT_SECONDARY),
+        ));
+        right_spans.push(Span::styled(
+            "  |  ",
+            Style::default().fg(COLOR_BORDER_SUBTLE),
+        ));
+        right_spans.push(Span::styled("[", Style::default().fg(COLOR_TEXT_MUTED)));
+        right_spans.push(Span::styled(
+            "?",
+            Style::default()
+                .fg(COLOR_TEXT_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ));
+        right_spans.push(Span::styled("] ", Style::default().fg(COLOR_TEXT_MUTED)));
+    }
+
+    let right_width = right_spans
+        .iter()
+        .map(|s| s.content.chars().count())
+        .sum::<usize>() as u16;
+
     let footer_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(30), Constraint::Length(54)])
+        .constraints([Constraint::Min(10), Constraint::Length(right_width)])
         .split(footer_area);
 
     let game_label = if let Some(prof) = app.profiles.iter().find(|p| p.is_active) {
@@ -306,13 +437,23 @@ fn render_footer(f: &mut Frame, app: &App, sep_area: Rect, footer_area: Rect) {
         let total_mods = app.mods.len();
         let delta = app.staged.delta_count();
         if delta > 0 {
-            left_spans.push(Span::styled(
-                format!(
-                    "{} of {} Mods Active | {} Staged Edits (*) [F5 Apply / Shift+D Discard]",
-                    active_count, total_mods, delta
-                ),
-                Style::default().fg(COLOR_AMBER),
-            ));
+            if footer_area.width >= 100 {
+                left_spans.push(Span::styled(
+                    format!(
+                        "{} of {} Mods Active | {} Staged Edits (*) [F5 Apply / Shift+D Discard]",
+                        active_count, total_mods, delta
+                    ),
+                    Style::default().fg(COLOR_AMBER),
+                ));
+            } else {
+                left_spans.push(Span::styled(
+                    format!(
+                        "{} of {} Mods | {} Staged (*)",
+                        active_count, total_mods, delta
+                    ),
+                    Style::default().fg(COLOR_AMBER),
+                ));
+            }
         } else {
             left_spans.push(Span::styled(
                 format!("{} of {} Mods Active (0 cycles)", active_count, total_mods),
@@ -322,55 +463,6 @@ fn render_footer(f: &mut Frame, app: &App, sep_area: Rect, footer_area: Rect) {
     }
 
     f.render_widget(Paragraph::new(Line::from(left_spans)), footer_chunks[0]);
-
-    let (cursor_pos, cursor_total) = match app.active_tab {
-        Tab::Overview => (app.overview_profile_cursor + 1, 4),
-        Tab::Mods => {
-            let len = app.filtered_mods().len();
-            (if len == 0 { 0 } else { app.cursor_index + 1 }, len)
-        }
-        Tab::Conflicts => {
-            let len = app.conflicts.len();
-            (
-                if len == 0 {
-                    0
-                } else {
-                    app.active_conflict_cursor + 1
-                },
-                len,
-            )
-        }
-        Tab::Downloads => {
-            let len = app.downloads.len();
-            (if len == 0 { 0 } else { app.download_cursor + 1 }, len)
-        }
-        Tab::Profiles => {
-            let len = app.profiles.len();
-            (if len == 0 { 0 } else { app.profile_cursor + 1 }, len)
-        }
-    };
-
-    let right_spans = vec![
-        Span::styled(
-            format!("Row {}/{}", cursor_pos, cursor_total),
-            Style::default().fg(COLOR_TEXT_SECONDARY),
-        ),
-        Span::styled("  |  ", Style::default().fg(COLOR_BORDER_SUBTLE)),
-        Span::styled(
-            &app.proton_version,
-            Style::default().fg(COLOR_TEXT_SECONDARY),
-        ),
-        Span::styled("  |  ", Style::default().fg(COLOR_BORDER_SUBTLE)),
-        Span::styled("[hold ", Style::default().fg(COLOR_TEXT_MUTED)),
-        Span::styled(
-            "?",
-            Style::default()
-                .fg(COLOR_TEXT_PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" for hotkeys] ", Style::default().fg(COLOR_TEXT_MUTED)),
-    ];
-
     f.render_widget(
         Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right),
         footer_chunks[1],
