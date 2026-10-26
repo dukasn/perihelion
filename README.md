@@ -3,174 +3,189 @@
 <div align="center">
   <img src="./assets/perihelion-banner.webp" alt="Perihelion Banner - Mod Fearlessly. Share Instantly." width="auto" height="auto"/>
   <p>
-    <em>No 40-step installation guides. No throttled 2 MB/s download caps.<br/>
-    Perihelion turns entire modded setups into lightweight, shareable blueprints you can sync and play in one command.</em>
+    <em>A next-generation, game-agnostic native Linux mod manager and virtual file system orchestrator.</em>
   </p>
 </div>
 
 ---
 
-## What Perihelion Enables
+Traditional game modding on Linux is full of friction. Players run heavy Windows tools through Wine wrappers, endure throttled download caps, and watch mod managers unpack loose files directly into game folders. One broken overwrite can corrupt an entire install.
 
-Traditional game modding on Linux has long been a fragile chore of manual file extraction, corrupted game directories, conflicting overwrites, and painfully slow download speeds. 
+Perihelion is built from the ground up as a next-generation Linux mod manager.
 
-Perihelion fundamentally re-imagines modding from **file mutation** to **declarative virtualization**:
+Rather than mutating game directories, it brings modern software principles—declarative lockfiles, constraint solving, and filesystem virtualization—into mod curation. The goal is simple: make modding fast, crash-resilient, and effortless to share across any Linux gaming setup.
 
-- ⚡ **Play in One Command:** Turn a 400-mod setup into a lightweight, declarative blueprint (`peri.lock`). Clone a link, sync dependencies, and boot directly into the game.
-- 🛡️ **Pristine Base Game Files:** Your vanilla installation is mounted strictly read-only. Mods exist as isolated, virtual layers composed on the fly—zero file overwriting, zero leftover clutter, zero risk of reinstalling.
-- 🚀 **Uncapped Swarm Streaming:** Distributed P2P BitTorrent streaming (`.peca`) delivers multi-gigabyte overhauls at the true line-speed of your connection—no throttled caps, no paywalled downloads.
-- 🔄 **Instant Profile Switching:** Swap between a lightweight *Vanilla+* playthrough and a total overhaul build in milliseconds without re-copying or re-deploying hundreds of gigabytes.
-- 🎮 **Proton & Steam Native:** Built from day one for modern Linux gaming, Steam Deck, and Proton prefixes.
+Vanilla game files stay read-only. Mods exist as isolated, versioned layers composed on the fly inside Linux kernel namespaces. When you launch, the game sees a fully modded tree; on disk, the base directory remains completely untouched.
+
+| Traditional Modding | Perihelion |
+| :--- | :--- |
+| Overwrites game files directly on disk | Vanilla game installs stay strictly read-only |
+| Fragile, manual 40-step install guides | Declarative lockfiles (`peri.lock`) synced in one command |
+| Throttled 2 MB/s downloads behind paywalls | Decentralized P2P swarms streaming at line speed |
+| Re-extracting 80 GB setups to switch profiles | Instant profile switching via virtual layers |
+| Game-specific Windows GUIs layered over Wine | Game-agnostic engine native to Linux and Steam Deck |
 
 ---
 
-## Engineered Differently (Under the Hood)
+## What Perihelion Enables
 
-Perihelion separates the functional domain from system operations through a strict **"Functional Core, Imperative Shell"** architecture:
+### Players & Communities
+- **Untouched Game Files:** Stock game files stay strictly read-only. Test heavy overhauls or risky mods without risking your base install.
+- **Instant Profile Swapping:** Jump between vanilla saves and 400-mod setups in seconds—virtual layers swap with zero disk copying.
+- **Native Steam Deck & Proton:** Runs inside unprivileged Linux namespaces. No root rights, no Wine-wrapped mod managers, and no .NET crashes.
+- **Any Title Supported:** Add first-class modding to any Linux game through a 15-line declarative layout profile.
+
+### Modpack Authors & Curators
+- **Modlists as Code:** Share complete mod setups as lightweight blueprints (`peri.toml` and `peri.lock`).
+- **Swarm Distribution:** Distribute overhauls over BitTorrent swarms (`.peca`). No bandwidth costs, and no throttled 2 MB/s caps.
+- **Zero Load-Order Drift:** The 3-tier DAG solver catches file collisions and ordering bugs before anything mounts.
+
+### Contributors & Tool Builders
+- **Pure Domain Engine:** `peri-core` keeps solver and graph logic free of disk or network I/O, ensuring fast, deterministic tests.
+- **Decoupled Public Crates:** Build custom tools using `peri-vfs` for OverlayFS sandboxes, `peri-archive` for streaming `.peca` unpacks, and `peri-net` for swarm transport.
+- **Fast Terminal Cockpit:** The `helion` TUI pairs a 60 FPS event loop with non-blocking background worker threads.
+
+---
+
+## The Suite
 
 ```text
 perihelion/
 ├── apps/
-│   ├── peri/             # High-speed CLI shell (clap, miette, tokio)
-│   ├── perid/            # Official background seeding & orchestration daemon
-│   └── helion/           # Terminal-native interactive TUI dashboard (ratatui, crossterm)
+│   ├── peri/             # Scriptable CLI shell for headless setups and automation
+│   ├── perid/            # Background daemon for community P2P swarm seeding
+│   └── helion/           # Keyboard-first interactive terminal dashboard
 ├── crates/
-│   ├── peri-vfs/         # Adapter: Linux OverlayFS & unprivileged namespaces (nix)
-│   ├── peri-archive/     # Adapter: .peca archives (tar, multi-threaded zstd)
-│   └── peri-net/         # Adapter: P2P BitTorrent (librqbit) & HTTP streaming (reqwest)
+│   ├── peri-vfs/         # Linux namespaces, OverlayFS stacks, and Proton discovery
+│   ├── peri-archive/     # Multi-threaded .peca (tar.zst) streaming engine
+│   └── peri-net/         # BitTorrent swarm transport and HTTP streaming
 └── common/
-    └── peri-core/        # Pure Domain: manifests, DAG solver, VFI, game profiles
+    └── peri-core/        # Pure domain: manifests, PubGrub solver, and VFI conflict logic
 ```
 
-### The Technical Marvel
+### 1. `helion` — The Interactive Terminal Dashboard
+A keyboard-driven dashboard for live workspace curation:
+- **Fast Navigation:** Full keyboard control with vim keys (`j`/`k`), tab cycling, and context drawers.
+- **Live Collision Inspector:** Side-by-side file collision view showing winning layers and instant override toggles.
+- **P2P Swarm Monitor:** Live transfer speeds, swarm health indicators, and background download queues.
 
-| Technology | How It Works | Why It Matters |
-| :--- | :--- | :--- |
-| **Kernel OverlayFS** | Stacks mod directories (`lowerdir`) in kernel memory over an untouched base game. | Instant virtual composition with **zero physical disk duplication**. |
-| **Unprivileged Namespaces** | Combines `CLONE_NEWNS` and `CLONE_NEWUSER` to create isolated mount tables per game. | Complete filesystem sandbox **without requiring root or sudo**. |
-| **The `.peca` Standard** | Multi-threaded Zstandard-compressed tarballs (`.tar.zst`) with a root `peri.toml` manifest. | Inspect manifests and file indices in milliseconds **without decompressing to disk**. |
-| **3-Tier DAG Waterfall** | PubGrub-inspired resolution solver using explicit edges $\to$ priority weights $\to$ hard conflicts. | **Deterministic, reproducible mod order** that eliminates mysterious load-order crashes. |
-
----
-
-## Tools in the Suite
-
-### 1. `helion` — The Interactive TUI Dashboard
-A fast, keyboard-first terminal dashboard inspired by modern developer tools like Warp and Claude Code:
-- **Centered Start Overview:** Live project telemetry, quick stats, and instant game switching.
-- **Smart Command Palette:** Inline autocomplete ghost text (`[Tab]` to complete) for commands, mod names, and profiles.
-- **3-Tier Conflict Resolver:** Side-by-side visual file collision inspector with 1-key resolution.
-- **P2P Swarm Queue:** Real-time swarm telemetry, peer health indicators, and transfer metrics.
-
-Run `helion` with:
+Launch `helion` in any workspace:
 ```bash
 cargo run -p helion
 ```
 
 ### 2. `peri` — The Headless CLI
-A high-performance command-line utility for scripting, headless installations, and automated CI pipelines:
+High-performance command-line utility for scripting, headless setups, and automated testing:
 
 ```bash
-# Initialize a workspace for Skyrim Special Edition
-peri init skyrim_se
+# Initialize a workspace mapped to Cyberpunk 2077
+peri init cyberpunk_2077
 
-# Fetch and cache a mod package or overhaul
-peri get https://mods.perihelion.io/profiles/requiem-overhaul.peca
+# Fetch an overhaul archive via magnet link or HTTP mirror
+peri get "magnet:?xt=urn:btih:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855&dn=cyber_overhaul.peca"
 
-# Solve dependency DAG and sync all virtual layers
+# Solve dependency DAG, verify SHA-256 hashes, and sync layers
 peri sync
 
 # Spawn unprivileged mount namespace and run the game
 peri run
 ```
 
-#### CLI Command Reference
-
-| Command | Action |
-| :--- | :--- |
-| `peri init <game_id>` | Initializes a Perihelion workspace mapped to a target game profile |
-| `peri get <uri>` | Fetches a package via HTTP or BitTorrent and registers it in cache |
-| `peri sync` | Solves dependency graph, verifies hashes, and prepares VFS layers |
-| `peri package <dir>` | Compiles a local mod folder into a validated `.peca` archive |
-| `peri check` | Runs global dependency DAG checks and validates file integrity |
-| `peri run` | Spawns the isolated namespace, mounts OverlayFS, and launches the game |
-| `peri config` | Inspects or edits global configuration (`~/.config/perihelion/config.toml`) |
-
-### 3. `perid` — The Official Background Daemon
-A lightweight, low-overhead background daemon that powers P2P BitTorrent swarm seeding and package availability across the community:
-- **Autonomous Swarm Seeding:** Monitors the `.perihelion/cache` repository and automatically seeds `.peca` packages over the BitTorrent DHT network.
-- **Configurable Rate Limits:** Respects user bandwidth policies configured in `~/.config/perihelion/config.toml` or via CLI flags (`--upload-limit`).
-- **Graceful Lifecycle Management:** Designed to run seamlessly in user space or as a `systemd --user` service unit.
-
-Run `perid` with:
-```bash
-cargo run --bin perid -- --help
-```
+### 3. `perid` — The Background Seeder
+A lightweight background daemon that seeds cached `.peca` packages back to the community swarm:
+- **Bandwidth Friendly:** Configurable upload caps via `--upload-limit` or user configuration files.
+- **Headless Service:** Runs as a standard background process or through systemd user units (`scripts/perid.service`).
 
 ---
 
-## Declarative Layout Mappings
+## Workspace Crates & Documentation
 
-Rather than hardcoding mod installation folders or mutating local files, Perihelion's domain core (`common/peri-core`) uses a declarative `LayoutMapping` model. Each profile specifies how package prefixes map to target VFS destinations (e.g. `Data/*` $\to$ `Data/*` or `archive/*` $\to$ `archive/*`) so OverlayFS can stack layers cleanly.
+Every crate is documented with architecture guides, invariants, and API examples:
 
-> [!NOTE]
-> **Active Development Status:** Multi-game profile automation, dynamic Steam library detection, and script extender launcher hooks are currently in active development. Profile views and game cards in `helion` serve as UI and layout architecture prototypes while the engine is being built.
+| Crate | Path | Responsibility | Documentation |
+| :--- | :--- | :--- | :--- |
+| **`peri-core`** | [`common/peri-core`](./common/peri-core) | Manifest models, PubGrub solver, Petgraph DAG, Virtual File Index | [README](./common/peri-core/README.md) |
+| **`peri-vfs`** | [`crates/peri-vfs`](./crates/peri-vfs) | Unprivileged namespaces, OverlayFS ordering, Proton launch wrappers | [README](./crates/peri-vfs/README.md) |
+| **`peri-archive`** | [`crates/peri-archive`](./crates/peri-archive) | `.peca` archive packaging, streaming decompression, path sanitization | [README](./crates/peri-archive/README.md) |
+| **`peri-net`** | [`crates/peri-net`](./crates/peri-net) | BitTorrent swarm downloads (`librqbit`), HTTP streams, sync bridges | [README](./crates/peri-net/README.md) |
+| **`helion`** | [`apps/helion`](./apps/helion) | Terminal UI engine, actor supervisors, async background pipelines | [README](./apps/helion/README.md) |
+| **`perihelion`** | [`apps/perihelion`](./apps/perihelion) | User-facing binaries: `peri` (CLI), `perid` (Daemon), and `helion` (TUI runner) | [README](./apps/perihelion/README.md) |
+
+---
+
+## Community Game Profiles
+
+Adding support for a new game requires no C++ extensions or engine patches. Game profiles are declarative definitions mapping package file patterns to game engine directories:
+
+```toml
+[profile]
+game_id = "starfield"
+name = "Starfield"
+executable = "Starfield.exe"
+
+[[mappings]]
+pattern = "Data/*"
+target = "Data"
+
+[[mappings]]
+pattern = "*.esm"
+target = "Data"
+```
+
+When `peri run` constructs the virtual stack, it evaluates these rules to position mods into their correct virtual paths.
+
+> [!TIP]
+> Want to support a new title? Check [`common/peri-core/src/profile.rs`](./common/peri-core/src/profile.rs) to see existing layout patterns or submit a community profile pull request.
 
 ---
 
 ## Development & Verification
 
-Perihelion enforces a strict zero-warning policy across all targets:
+Perihelion enforces a strict zero-warning policy across all workspace targets:
 
 ```bash
-# 1. Run all workspace unit tests
+# 1. Run workspace unit and integration tests
 cargo test --workspace
 
-# 2. Strict clippy linting
+# 2. Strict linter checks (zero warnings allowed)
 cargo clippy --workspace --all-targets -- -D warnings
 
 # 3. Formatting check
 cargo fmt --all --check
 
-# 4. CLI Sanity check
+# 4. CLI end-to-end sanity check
 cargo run --bin peri -- --help
-
-# 5. Background daemon sanity check
-cargo run --bin perid -- --help
-
-# 6. Helion TUI Sanity check
-cargo run -p helion
 ```
 
-For full details on architecture, toolchain, and contribution standards, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+> [!NOTE]
+> Review [`CONTRIBUTING.md`](./CONTRIBUTING.md) for architectural invariants, Flatpak environment quirks, and pull request guidelines.
 
 ---
 
-## Community & Policies
+## Policies & Governance
 
-- 🤝 **[Contributing Guidelines](./CONTRIBUTING.md):** Architectural invariants, developer workflows, and PR standards.
-- 🏷️ **[Project Naming & Authenticity Policy](./TRADEMARK.md):** Guidelines for forks, distributions, and preventing impersonation.
-- 🛡️ **[Security Policy](./SECURITY.md):** Responsible disclosure process and threat model.
-- 📜 **[Code of Conduct](./CODE_OF_CONDUCT.md):** Community standards and pledge.
+- **[Contributing Guidelines](./CONTRIBUTING.md):** Architectural boundaries, development workflows, and PR expectations.
+- **[Authenticity & Naming Policy](./TRADEMARK.md):** Guidelines for packaging, distribution, and forks.
+- **[Security Policy](./SECURITY.md):** Vulnerability disclosure and sandbox threat model.
+- **[Code of Conduct](./CODE_OF_CONDUCT.md):** Contributor standards and pledge.
 
 ---
 
 ## License
 
-Perihelion uses a split-licensing model:
-
-- 💻 **Software & Codebase:** Licensed under the [GNU General Public License v3.0 (GPL-3.0-or-later)](./LICENSE).
-- 🎨 **Visual Assets & Media:** All branding, banners, and vector artwork in [`assets/`](./assets) are licensed under the [Creative Commons Attribution 4.0 International (CC BY 4.0)](./LICENSE-CC-BY-4.0).
-
-<br/>
-
 <div align="center">
-  <a href="./LICENSE">
-    <img src="./gplv3.webp" alt="GPLv3 License." width="280px" height="auto"/>
-  </a>
   <p>
-    Software licensed under <strong>GPL-3.0-or-later</strong> &bull; Visual assets licensed under <strong>CC-BY-4.0</strong>
+    <a href="./LICENSE">
+      <img src="./gplv3.webp" alt="GNU General Public License v3.0" height="72"/>
+    </a>
+    &nbsp;&nbsp;&nbsp;&nbsp;
+    <a href="./LICENSE-CC-BY-4.0">
+      <img src="./cc.by.png" alt="Creative Commons Attribution 4.0 International" height="72"/>
+    </a>
+  </p>
+  <p>
+    <a href="./LICENSE"><strong>Software licensed under GPL-3.0-or-later</strong></a>
+    &nbsp;&bull;&nbsp;
+    <a href="./LICENSE-CC-BY-4.0"><strong>Branding &amp; media licensed under CC-BY-4.0</strong></a>
   </p>
 </div>
-
-

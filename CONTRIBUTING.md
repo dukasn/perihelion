@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to **Perihelion**! 
 
-Perihelion is a game-agnostic, native Linux package manager and Virtual File System (VFS) orchestrator designed to make game modding declarative, non-destructive, and lightning fast.
+Perihelion is a next-generation, game-agnostic native Linux mod manager and Virtual File System (VFS) orchestrator designed to make game modding declarative, non-destructive, and lightning fast.
 
 This document provides guidelines, architectural principles, licensing requirements, and development workflows to help you make successful contributions.
 
