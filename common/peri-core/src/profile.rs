@@ -18,11 +18,24 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::error::ProfileError;
+use crate::path::{FastPathRouter, NormalizedPath};
+use crate::signature::EngineSignature;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutMapping {
+    #[serde(alias = "from")]
     pub from_prefix: String,
+    #[serde(alias = "to")]
     pub to_prefix: String,
+}
+
+impl LayoutMapping {
+    pub fn new(from: impl Into<String>, to: impl Into<String>) -> Self {
+        Self {
+            from_prefix: from.into(),
+            to_prefix: to.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,79 +69,6 @@ impl GameProfile {
         toml::to_string_pretty(self).map_err(|e| ProfileError::ParseError(e.to_string()))
     }
 
-    pub fn cyberpunk_2077() -> Self {
-        Self {
-            id: "cyberpunk_2077".to_string(),
-            name: "Cyberpunk 2077".to_string(),
-            steam_app_id: Some(1091500),
-            default_executable: Some("bin/x64/Cyberpunk2077.exe".to_string()),
-            mappings: vec![
-                LayoutMapping {
-                    from_prefix: "archive".to_string(),
-                    to_prefix: "archive".to_string(),
-                },
-                LayoutMapping {
-                    from_prefix: "bin".to_string(),
-                    to_prefix: "bin".to_string(),
-                },
-                LayoutMapping {
-                    from_prefix: "r6".to_string(),
-                    to_prefix: "r6".to_string(),
-                },
-                LayoutMapping {
-                    from_prefix: "mods".to_string(),
-                    to_prefix: "archive/pc/mod".to_string(),
-                },
-            ],
-        }
-    }
-
-    pub fn skyrim_se() -> Self {
-        Self {
-            id: "skyrim_se".to_string(),
-            name: "The Elder Scrolls V: Skyrim Special Edition".to_string(),
-            steam_app_id: Some(489830),
-            default_executable: Some("SkyrimSE.exe".to_string()),
-            mappings: vec![
-                LayoutMapping {
-                    from_prefix: "Data".to_string(),
-                    to_prefix: "Data".to_string(),
-                },
-                LayoutMapping {
-                    from_prefix: "data".to_string(),
-                    to_prefix: "Data".to_string(),
-                },
-                LayoutMapping {
-                    from_prefix: "SKSE".to_string(),
-                    to_prefix: "Data/SKSE".to_string(),
-                },
-                LayoutMapping {
-                    from_prefix: "skse".to_string(),
-                    to_prefix: "Data/SKSE".to_string(),
-                },
-            ],
-        }
-    }
-
-    pub fn starfield() -> Self {
-        Self {
-            id: "starfield".to_string(),
-            name: "Starfield".to_string(),
-            steam_app_id: Some(1716740),
-            default_executable: Some("Starfield.exe".to_string()),
-            mappings: vec![
-                LayoutMapping {
-                    from_prefix: "Data".to_string(),
-                    to_prefix: "Data".to_string(),
-                },
-                LayoutMapping {
-                    from_prefix: "data".to_string(),
-                    to_prefix: "Data".to_string(),
-                },
-            ],
-        }
-    }
-
     pub fn generic(id: &str) -> Self {
         Self {
             id: id.to_string(),
@@ -139,36 +79,40 @@ impl GameProfile {
         }
     }
 
-    pub fn builtin_profiles() -> Vec<Self> {
-        vec![Self::cyberpunk_2077(), Self::skyrim_se(), Self::starfield()]
-    }
-
-    pub fn resolve(id: &str, custom_profiles: &[Self]) -> Self {
-        for profile in custom_profiles {
+    pub fn resolve(id: &str, profiles: &[Self]) -> Self {
+        for profile in profiles {
             if profile.id.eq_ignore_ascii_case(id) {
                 return profile.clone();
-            }
-        }
-
-        for builtin in Self::builtin_profiles() {
-            if builtin.id.eq_ignore_ascii_case(id) {
-                return builtin;
             }
         }
 
         Self::generic(id)
     }
 
+    pub fn router(&self) -> FastPathRouter {
+        FastPathRouter::compile(&self.mappings)
+    }
+
     pub fn map_path(&self, relative_path: &Path) -> PathBuf {
-        let path_str = relative_path.to_string_lossy();
-        for mapping in &self.mappings {
-            if path_str.starts_with(&mapping.from_prefix) {
-                let remainder = path_str.strip_prefix(&mapping.from_prefix).unwrap_or("");
-                let remainder = remainder.trim_start_matches('/');
-                return PathBuf::from(&mapping.to_prefix).join(remainder);
-            }
+        if let Some(norm) = NormalizedPath::new(relative_path) {
+            self.router().route(&norm)
+        } else {
+            relative_path.to_path_buf()
         }
-        relative_path.to_path_buf()
+    }
+
+    pub fn from_signature(
+        sig: &EngineSignature,
+        game_id: impl Into<String>,
+        name: Option<impl Into<String>>,
+    ) -> Self {
+        Self {
+            id: game_id.into(),
+            name: name.map(|n| n.into()).unwrap_or_else(|| sig.name.clone()),
+            steam_app_id: None,
+            default_executable: None,
+            mappings: sig.mappings.clone(),
+        }
     }
 }
 
@@ -178,15 +122,33 @@ mod tests {
 
     #[test]
     fn test_game_profile_mapping() {
-        let profile = GameProfile::cyberpunk_2077();
+        let profile = GameProfile {
+            id: "test_game".to_string(),
+            name: "Test Game".to_string(),
+            steam_app_id: Some(12345),
+            default_executable: Some("bin/game.exe".to_string()),
+            mappings: vec![LayoutMapping {
+                from_prefix: "mods".to_string(),
+                to_prefix: "archive/pc/mod".to_string(),
+            }],
+        };
         let mod_path = Path::new("mods/my_mod.archive");
         let mapped = profile.map_path(mod_path);
         assert_eq!(mapped, PathBuf::from("archive/pc/mod/my_mod.archive"));
     }
 
     #[test]
-    fn test_skyrim_se_mapping() {
-        let profile = GameProfile::skyrim_se();
+    fn test_prefix_mapping() {
+        let profile = GameProfile {
+            id: "test_game".to_string(),
+            name: "Test Game".to_string(),
+            steam_app_id: Some(12345),
+            default_executable: Some("game.exe".to_string()),
+            mappings: vec![LayoutMapping {
+                from_prefix: "SKSE".to_string(),
+                to_prefix: "Data/SKSE".to_string(),
+            }],
+        };
         let mod_path = Path::new("SKSE/Plugins/engine_fixes.dll");
         let mapped = profile.map_path(mod_path);
         assert_eq!(mapped, PathBuf::from("Data/SKSE/Plugins/engine_fixes.dll"));
@@ -226,5 +188,13 @@ to_prefix = "Data"
         let resolved = GameProfile::resolve("cyberpunk_2077", &[custom]);
         assert_eq!(resolved.name, "Custom Cyberpunk");
         assert_eq!(resolved.default_executable, Some("custom.exe".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_fallback_generic() {
+        let resolved = GameProfile::resolve("unknown_game", &[]);
+        assert_eq!(resolved.id, "unknown_game");
+        assert_eq!(resolved.name, "unknown_game");
+        assert!(resolved.mappings.is_empty());
     }
 }

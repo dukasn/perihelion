@@ -1,0 +1,122 @@
+# Perihelion - Generic Platform Providers, Layout Signatures & Mapping LUT
+# Embedded into the engine at compile-time as the baseline discovery configuration.
+# Users can extend or override any provider, signature, or mapping type via config.toml.
+
+[providers.steam]
+roots = [
+    "~/.local/share/Steam",
+    "~/.steam/root",
+    "~/.steam/steam",
+    "~/.var/app/com.valvesoftware.Steam/data/Steam",
+    "~/.var/app/com.valvesoftware.Steam/.local/share/Steam",
+    "~/snap/steam/common/.local/share/Steam",
+]
+libraries = []
+compatibility_dirs = [
+    "compatibilitytools.d",
+    "root/compatibilitytools.d",
+    "~/.local/share/Steam/compatibilitytools.d",
+]
+binary_subdirs = [
+    "bin/x64",
+    "bin",
+    "x64",
+    "Binaries/Win64",
+    "bin64",
+]
+binary_extensions = [
+    "exe",
+]
+environment = [
+    "VK_ICD_FILENAMES",
+    "VK_LAYER_PATH",
+    "MANGOHUD",
+    "MANGOHUD_CONFIG",
+    "DXVK_HUD",
+    "ENABLE_VKBASALT",
+    "PROTON_ENABLE_NVAPI",
+    "WINE_FULLSCREEN_FSR",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_RUNTIME_DIR",
+    "PULSE_SERVER",
+]
+
+# Declarative Engine Layout Signatures
+[[signatures]]
+id = "bethesda_creation"
+name = "Bethesda Creation Engine"
+priority = 100
+anchors = ["Data"]
+markers = ["Data/*.esm", "Data/*.esp", "*_loader.exe", "Data/*.ba2", "Data/*.bsa"]
+binary_subdirs = [".", "bin"]
+binary_extensions = ["exe"]
+environment = ["PROTON_ENABLE_NVAPI", "DXVK_HUD"]
+mappings = [
+    { from = "Data", to = "Data" },
+    { from = "SKSE", to = "Data/SKSE" },
+    { from = "F4SE", to = "Data/F4SE" },
+    { from = "SFSE", to = "Data/SFSE" },
+]
+content_extensions = ["esp", "esm", "esl", "ba2", "bsa", "nif", "dds"]
+
+[[signatures]]
+id = "redengine_4"
+name = "REDengine 4 (Cyberpunk 2077)"
+priority = 150
+anchors = ["bin/x64"]
+markers = ["r6/config", "archive/pc/content", "bin/x64/Cyberpunk2077.exe"]
+binary_subdirs = ["bin/x64"]
+binary_extensions = ["exe"]
+environment = ["DXVK_HUD", "PROTON_ENABLE_NVAPI"]
+mappings = [
+    { from = "mods", to = "archive/pc/mod" },
+    { from = "archive", to = "archive" },
+    { from = "r6", to = "r6" },
+    { from = "redscript", to = "r6/scripts" },
+    { from = "bin", to = "bin" },
+]
+content_extensions = ["archive", "reds", "lua"]
+
+[[signatures]]
+id = "unreal_engine"
+name = "Unreal Engine Universal"
+priority = 50
+anchors = ["Engine/Binaries"]
+markers = ["*/*/Content/Paks", "*/Content/Paks"]
+binary_subdirs = ["Binaries/Win64", "Binaries/Linux"]
+binary_extensions = ["exe", "bin"]
+environment = ["DXVK_HUD"]
+mappings = [
+    { from = "~mods", to = "Content/Paks/~mods" },
+    { from = "LogicMods", to = "Content/Paks/LogicMods" },
+    { from = "Binaries", to = "Binaries" },
+]
+content_extensions = ["pak", "ucas", "utoc"]
+
+[[signatures]]
+id = "unity_engine"
+name = "Unity Engine"
+priority = 40
+anchors = ["*_Data"]
+markers = ["*_Data/Managed", "MonoBleedingEdge"]
+binary_subdirs = ["."]
+binary_extensions = ["exe", "x86_64"]
+environment = ["DXVK_HUD"]
+mappings = [
+    { from = "BepInEx", to = "BepInEx" },
+]
+content_extensions = ["assets", "bundle"]
+
+[mappings]
+default = []
+
+[mappings.types]
+redengine = [
+    { from = "mods", to = "archive/pc/mod" },
+]
+
+[mappings.targets]
+"1091500" = [
+    { from = "mods", to = "archive/pc/mod" },
+]

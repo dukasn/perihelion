@@ -26,12 +26,17 @@ pub mod error;
 pub mod graph;
 pub mod lockfile;
 pub mod manifest;
+pub mod path;
 pub mod profile;
 pub mod security;
+pub mod signature;
 pub mod solver;
 pub mod vfi;
 
-pub use config::{GlobalConfig, NetworkConfig, StorageConfig, CONFIG_FILENAME};
+pub use config::{
+    GlobalConfig, MappingRegistry, NetworkConfig, ProviderConfig, SteamConfig, StorageConfig,
+    UiConfig, BUILTIN_DISCOVERY_TOML, CONFIG_FILENAME,
+};
 pub use draft::{
     ExecutionSessionMetadata, SessionDraft, StagedChanges, UiContext, DRAFT_FILENAME,
     DRAFT_SCHEMA_VERSION, DRAFT_TMP_FILENAME,
@@ -43,8 +48,10 @@ pub use manifest::{
     Assets, LoadOrderRules, Manifest, OverrideRule, PackageMetadata, Priority, TargetGame,
     MANIFEST_FILENAME,
 };
+pub use path::{hash_normalized_path, CompiledMappingRule, FastPathRouter, NormalizedPath};
 pub use profile::{GameProfile, LayoutMapping};
 pub use security::validate_safe_path;
+pub use signature::{EngineSignature, SignatureRegistry};
 pub use solver::{
     comparator_to_ranges, solve_dependencies, solve_workspace, to_pubgrub_version,
     to_semver_version, version_req_to_ranges, PackageCatalog,
