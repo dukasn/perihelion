@@ -19,9 +19,13 @@
 //! Handles Linux mount namespaces and OverlayFS stack orchestration to deliver
 //! zero-overhead, non-destructive game sandboxing.
 
+pub mod engine;
 pub mod proton;
 
-pub use proton::{ProtonLaunch, ProtonTool, SteamDiscovery};
+pub use engine::{
+    detect_engine_layout, find_executable_for_engine, probe_game_directory, wildcard_match,
+};
+pub use proton::{DiscoveredSteamApp, ProtonLaunch, ProtonTool, SteamDiscovery};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};

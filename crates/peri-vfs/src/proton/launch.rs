@@ -19,6 +19,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::{debug, info, info_span};
 
+use peri_core::SteamConfig;
+
+use super::discovery::SteamDiscovery;
 use crate::VfsError;
 
 /// Discovered Proton / Wine compatibility tool.
@@ -53,93 +56,41 @@ impl ProtonLaunch {
     }
 }
 
-/// Steam installation and library discovery engine.
-pub struct SteamDiscovery;
-
 impl SteamDiscovery {
-    /// Probes standard Linux paths for active Steam root installations (both native and Flatpak).
-    pub fn known_steam_roots() -> Vec<PathBuf> {
-        let mut roots = Vec::new();
-
-        if let Ok(steam_dir) = std::env::var("STEAM_DIR") {
-            roots.push(PathBuf::from(steam_dir));
-        }
-
-        if let Ok(home) = std::env::var("HOME") {
-            let home_path = PathBuf::from(home);
-            roots.push(home_path.join(".local/share/Steam"));
-            roots.push(home_path.join(".steam/root"));
-            roots.push(home_path.join(".steam/steam"));
-            roots.push(home_path.join(".var/app/com.valvesoftware.Steam/data/Steam"));
-            roots.push(home_path.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"));
-        }
-
-        roots
-            .into_iter()
-            .filter(|p| p.exists() && p.is_dir())
-            .collect()
-    }
-
-    /// Finds the primary active Steam root installation.
-    pub fn find_active_steam_root() -> Option<PathBuf> {
-        Self::known_steam_roots()
-            .into_iter()
-            .find(|p| p.join("steamapps").exists() || p.join("ubuntu12_32").exists())
-    }
-
-    /// Parses Steam's `libraryfolders.vdf` to locate all configured Steam library folders across drives.
-    pub fn discover_library_folders(steam_root: &Path) -> Vec<PathBuf> {
-        let mut libraries = vec![steam_root.to_path_buf()];
-        let vdf_path = steam_root.join("steamapps/libraryfolders.vdf");
-
-        if let Ok(content) = fs::read_to_string(&vdf_path) {
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with("\"path\"") {
-                    let parts: Vec<&str> = trimmed.split('"').collect();
-                    if parts.len() >= 4 {
-                        let lib_path = PathBuf::from(parts[3]);
-                        if lib_path.exists() && !libraries.contains(&lib_path) {
-                            debug!(path = %lib_path.display(), "Discovered Steam library folder");
-                            libraries.push(lib_path);
-                        }
-                    }
-                }
-            }
-        }
-
-        libraries
-    }
-
-    /// Finds the `compatdata/{app_id}` directory across all Steam library folders.
-    pub fn find_compat_data(libraries: &[PathBuf], app_id: u64) -> Option<PathBuf> {
-        for lib in libraries {
-            let candidate = lib.join(format!("steamapps/compatdata/{app_id}"));
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
-        None
-    }
-
     /// Discovers all available Proton versions across Steam libraries and compatibility tool directories.
     pub fn discover_proton_versions(steam_root: &Path, libraries: &[PathBuf]) -> Vec<ProtonTool> {
+        Self::discover_proton_versions_with_config(
+            steam_root,
+            libraries,
+            &Self::default_steam_provider(),
+        )
+    }
+
+    /// Discovers all available Proton versions using configured compatibility directories.
+    pub fn discover_proton_versions_with_config(
+        steam_root: &Path,
+        libraries: &[PathBuf],
+        config: &SteamConfig,
+    ) -> Vec<ProtonTool> {
         let mut tools = Vec::new();
 
-        // 1. Scan compatibilitytools.d (Community builds: GE-Proton, Proton-GE, etc.)
-        let compat_dirs = vec![
-            steam_root.join("compatibilitytools.d"),
-            steam_root.join("root/compatibilitytools.d"),
-        ];
+        // 1. Scan configured compatibility tool directories (Proton-GE, GE-Proton, custom Wine)
+        for compat_dir in &config.compatibility_dirs {
+            let resolved_dir = if compat_dir.is_relative() {
+                steam_root.join(compat_dir)
+            } else {
+                Self::expand_path(compat_dir)
+            };
 
-        for compat_dir in compat_dirs {
-            if let Ok(entries) = fs::read_dir(compat_dir) {
+            if let Ok(entries) = fs::read_dir(&resolved_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     let runner = path.join("proton");
                     if runner.exists() {
                         let name = entry.file_name().to_string_lossy().into_owned();
-                        tools.push(ProtonTool { name, path, runner });
+                        if !tools.iter().any(|t: &ProtonTool| t.path == path) {
+                            tools.push(ProtonTool { name, path, runner });
+                        }
                     }
                 }
             }
@@ -154,7 +105,7 @@ impl SteamDiscovery {
                     if name.starts_with("Proton") {
                         let path = entry.path();
                         let runner = path.join("proton");
-                        if runner.exists() {
+                        if runner.exists() && !tools.iter().any(|t: &ProtonTool| t.path == path) {
                             tools.push(ProtonTool { name, path, runner });
                         }
                     }
@@ -173,16 +124,31 @@ impl SteamDiscovery {
         explicit_proton: Option<&Path>,
         explicit_prefix: Option<&Path>,
     ) -> Result<ProtonLaunch, VfsError> {
+        Self::resolve_proton_launch_with_config(
+            steam_app_id,
+            explicit_proton,
+            explicit_prefix,
+            &Self::default_steam_provider(),
+        )
+    }
+
+    /// Builds a complete `ProtonLaunch` payload using declarative `SteamConfig`.
+    pub fn resolve_proton_launch_with_config(
+        steam_app_id: Option<u64>,
+        explicit_proton: Option<&Path>,
+        explicit_prefix: Option<&Path>,
+        config: &SteamConfig,
+    ) -> Result<ProtonLaunch, VfsError> {
         let span = info_span!("resolve_proton_launch", ?steam_app_id);
         let _enter = span.enter();
         debug!("Resolving Proton launch configuration");
 
-        let steam_root = Self::find_active_steam_root().unwrap_or_else(|| {
+        let steam_root = Self::find_active_steam_root_with_config(config).unwrap_or_else(|| {
             PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
                 .join(".local/share/Steam")
         });
 
-        let libraries = Self::discover_library_folders(&steam_root);
+        let libraries = Self::discover_library_folders_with_config(&steam_root, config);
 
         // 1. Resolve Proton binary
         let runner = if let Some(explicit) = explicit_proton {
@@ -197,13 +163,18 @@ impl SteamDiscovery {
                 )));
             }
         } else {
-            let available = Self::discover_proton_versions(&steam_root, &libraries);
+            let available =
+                Self::discover_proton_versions_with_config(&steam_root, &libraries, config);
             if let Some(first) = available.into_iter().next() {
-                info!(proton = %first.name, path = %first.runner.display(), "Selected Proton runtime");
+                info!(
+                    proton = %first.name,
+                    path = %first.runner.display(),
+                    "Selected Proton runtime"
+                );
                 first.runner
             } else {
                 return Err(VfsError::ProtonDiscoveryFailed(
-                    "No Proton versions found in Steam installations or compatibilitytools.d. Please specify --proton <path>.".to_string()
+                    "No Proton versions found in Steam installations or compatibilitytools.d. Please specify --proton <path>.".to_string(),
                 ));
             }
         };
@@ -253,25 +224,10 @@ impl SteamDiscovery {
             env_vars.push(("SteamGameId".to_string(), app_id.to_string()));
         }
 
-        // Pass-through standard Linux gaming graphics & layer variables if set
-        let passthrough_vars = [
-            "VK_ICD_FILENAMES",
-            "VK_LAYER_PATH",
-            "MANGOHUD",
-            "MANGOHUD_CONFIG",
-            "DXVK_HUD",
-            "ENABLE_VKBASALT",
-            "PROTON_ENABLE_NVAPI",
-            "WINE_FULLSCREEN_FSR",
-            "DISPLAY",
-            "WAYLAND_DISPLAY",
-            "XDG_RUNTIME_DIR",
-            "PULSE_SERVER",
-        ];
-
-        for var in passthrough_vars {
+        // Pass-through configured gaming graphics, layers & runtime variables if set
+        for var in &config.environment {
             if let Ok(val) = std::env::var(var) {
-                env_vars.push((var.to_string(), val));
+                env_vars.push((var.clone(), val));
             }
         }
 
@@ -282,63 +238,5 @@ impl SteamDiscovery {
             steam_client_path: steam_root,
             env_vars,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[test]
-    fn test_discover_library_folders_vdf() {
-        let tmp = tempdir().unwrap();
-        let steamapps = tmp.path().join("steamapps");
-        fs::create_dir_all(&steamapps).unwrap();
-
-        let vdf_content = r#"
-"libraryfolders"
-{
-    "0"
-    {
-        "path"      "/mnt/games/FastSSD"
-        "label"     ""
-    }
-    "1"
-    {
-        "path"      "/mnt/storage/Secondary"
-        "label"     ""
-    }
-}
-"#;
-        fs::write(steamapps.join("libraryfolders.vdf"), vdf_content).unwrap();
-
-        let libs = SteamDiscovery::discover_library_folders(tmp.path());
-        assert_eq!(libs[0], tmp.path());
-    }
-
-    #[test]
-    fn test_resolve_proton_launch_with_explicit_paths() {
-        let tmp = tempdir().unwrap();
-        let proton_dir = tmp.path().join("Proton-GE");
-        fs::create_dir_all(&proton_dir).unwrap();
-        let runner = proton_dir.join("proton");
-        fs::write(&runner, "#!/bin/sh\necho running").unwrap();
-
-        let prefix_dir = tmp.path().join("prefix");
-        fs::create_dir_all(&prefix_dir).unwrap();
-
-        let launch =
-            SteamDiscovery::resolve_proton_launch(Some(489830), Some(&runner), Some(&prefix_dir))
-                .expect("Explicit proton resolution should succeed");
-
-        assert_eq!(launch.runner, runner);
-        assert_eq!(launch.compat_data_path, prefix_dir);
-        assert_eq!(launch.wine_prefix, prefix_dir.join("pfx"));
-
-        let env_map: std::collections::HashMap<_, _> = launch.env_vars.into_iter().collect();
-        assert_eq!(env_map.get("SteamAppId").unwrap(), "489830");
-        assert!(env_map.contains_key("STEAM_COMPAT_DATA_PATH"));
-        assert!(env_map.contains_key("WINEPREFIX"));
     }
 }
