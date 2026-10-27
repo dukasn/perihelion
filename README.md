@@ -117,7 +117,7 @@ Every crate is documented with architecture guides, invariants, and API examples
 
 ### Guides & Tutorials
 
-- **[Skyrim Special Edition Modding Tutorial](./docs/TUTORIAL_SKYRIM.md):** Complete end-to-end guide covering profile discovery, `.peca` packaging, dependency lockfiles, and sandboxed Proton launching.
+- **[Game Modding Guide & Tutorial](./docs/MODDING_TUTORIAL.md):** Complete guide detailing the universal modding lifecycle across any game, with a full Skyrim Special Edition walkthrough.
 - **[Project Distribution & Architecture](./docs/PROJECT_DISTRIBUTION.md):** Dual-engine release pipeline, semantic versioning mechanics, and automated binary distribution.
 
 ---

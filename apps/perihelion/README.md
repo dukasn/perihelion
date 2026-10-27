@@ -33,7 +33,7 @@ peri <COMMAND> [OPTIONS]
 | `config` | Displays or edits global settings (`~/.config/perihelion/config.toml`). |
 
 > [!TIP]
-> For a hands-on walkthrough using `peri` and `helion` to mod Skyrim Special Edition from scratch, see the **[Skyrim Modding Tutorial](../../docs/TUTORIAL_SKYRIM.md)**.
+> For a hands-on walkthrough covering the universal modding lifecycle and a complete Skyrim Special Edition example, see the **[Game Modding Guide & Tutorial](../../docs/MODDING_TUTORIAL.md)**.
 
 ### Common Workflows
 
