@@ -197,6 +197,7 @@ async fn handle_init(args: InitArgs) -> Result<(), CliError> {
             target: TargetGame {
                 game_id: args.game_id.clone(),
                 engine_version: None,
+                game_path: None,
             },
             assets: None,
             dependencies: Default::default(),
@@ -668,12 +669,26 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
         .map(|name| extracted_dir.join(name))
         .collect();
 
-    let base_dir = workspace.join("base_game");
+    let global_config = crate::config::load_global_config_with_workspace(Some(&workspace));
+    let provider = global_config.provider("steam");
+
+    let resolved_base = peri_vfs::resolve_base_game_path(&peri_vfs::BaseGameQuery {
+        cli_path: args.base_path.as_deref(),
+        env_var: std::env::var("PERI_BASE_GAME").ok().as_deref(),
+        manifest_path: manifest.target.game_path.as_deref(),
+        profile_path: profile.game_path.as_deref(),
+        steam_app_id: profile.steam_app_id,
+        provider: Some(&provider),
+        workspace: Some(&workspace),
+    })
+    .map_err(|e| CliError::Vfs(e.to_string()))?;
+
+    let base_dir = resolved_base.path;
     let mount_point = workspace.join(MOUNT_DIR);
     let upper_dir = workspace.join(UPPER_DIR);
     let work_dir = workspace.join(WORK_DIR);
 
-    let plan = VfsPlan::new(base_dir, mount_point)
+    let plan = VfsPlan::new(base_dir.clone(), mount_point)
         .with_layers(layers)
         .with_upper(upper_dir, work_dir);
 
@@ -690,8 +705,6 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
             || exec_cmd.to_lowercase().ends_with(".exe"));
 
     let proton_launch = if use_proton {
-        let global_config = crate::config::load_global_config();
-        let provider = global_config.provider("steam");
         match peri_vfs::SteamDiscovery::resolve_proton_launch_with_config(
             profile.steam_app_id,
             args.proton.as_deref(),
@@ -715,6 +728,11 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
 
     println!("Preparing Perihelion Virtual File System sandbox:");
     println!("   Game:          {} ({})", profile.name, profile.id);
+    println!(
+        "   Base Game:     {} ({})",
+        base_dir.display(),
+        resolved_base.source
+    );
     println!("   Active Layers: {}", resolved_order.len());
     println!("   Mount Point:   {}", plan.mount_point.display());
     println!("   Mount Options: {}", mount_options);
@@ -760,4 +778,88 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
     info!(exit_code = exit_code, "Execution finished");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_handle_run_with_dynamic_base_path() {
+        let cur = std::env::current_dir().unwrap();
+        let temp = tempfile::Builder::new()
+            .prefix(".tmp_peri_test_")
+            .tempdir_in(&cur)
+            .unwrap();
+        let ws = temp.path().join("workspace");
+        fs::create_dir_all(&ws).unwrap();
+
+        let manifest_content = r#"
+[package]
+name = "my_modlist"
+author = "Tester"
+version = "0.1.0"
+
+[target]
+game_id = "test_game"
+"#;
+        fs::write(ws.join(MANIFEST_FILENAME), manifest_content).unwrap();
+
+        let custom_game = temp.path().join("custom_game_root");
+        fs::create_dir_all(&custom_game).unwrap();
+
+        let run_args = RunArgs {
+            workspace: ws,
+            base_path: Some(custom_game),
+            dry_run: true,
+            exec: Some("echo hello".to_string()),
+            proton: None,
+            prefix: None,
+            native: true,
+            args: Vec::new(),
+        };
+
+        let result = handle_run(run_args).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_handle_run_missing_base_game_fails_descriptively() {
+        let cur = std::env::current_dir().unwrap();
+        let temp = tempfile::Builder::new()
+            .prefix(".tmp_peri_test_")
+            .tempdir_in(&cur)
+            .unwrap();
+        let ws = temp.path().join("workspace");
+        fs::create_dir_all(&ws).unwrap();
+
+        let manifest_content = r#"
+[package]
+name = "my_modlist"
+author = "Tester"
+version = "0.1.0"
+
+[target]
+game_id = "test_game"
+"#;
+        fs::write(ws.join(MANIFEST_FILENAME), manifest_content).unwrap();
+
+        let run_args = RunArgs {
+            workspace: ws,
+            base_path: None,
+            dry_run: true,
+            exec: Some("echo hello".to_string()),
+            proton: None,
+            prefix: None,
+            native: true,
+            args: Vec::new(),
+        };
+
+        let result = handle_run(run_args).await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Could not resolve base game directory"));
+        assert!(err_msg.contains("--base-path"));
+        assert!(err_msg.contains("PERI_BASE_GAME"));
+    }
 }

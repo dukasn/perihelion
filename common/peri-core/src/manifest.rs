@@ -18,6 +18,7 @@ use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use serde_spanned::Spanned;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use crate::error::ManifestError;
 
@@ -86,6 +87,18 @@ pub struct TargetGame {
     pub game_id: String,
     #[serde(default)]
     pub engine_version: Option<String>,
+    #[serde(default, alias = "base_path")]
+    pub game_path: Option<PathBuf>,
+}
+
+impl TargetGame {
+    pub fn new(game_id: impl Into<String>) -> Self {
+        Self {
+            game_id: game_id.into(),
+            engine_version: None,
+            game_path: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +149,8 @@ struct RawPackageMetadata {
 struct RawTargetGame {
     game_id: Option<Spanned<String>>,
     engine_version: Option<Spanned<String>>,
+    #[serde(alias = "base_path")]
+    game_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -280,6 +295,7 @@ impl Manifest {
         let target = TargetGame {
             game_id,
             engine_version,
+            game_path: raw_target.game_path,
         };
 
         // 3. Validate [dependencies]

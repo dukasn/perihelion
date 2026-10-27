@@ -39,3 +39,4 @@ environment = [
     "XDG_RUNTIME_DIR",
     "PULSE_SERVER",
 ]
+

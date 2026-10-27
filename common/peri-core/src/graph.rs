@@ -259,10 +259,7 @@ mod tests {
                 priority: Default::default(),
                 description: None,
             },
-            target: TargetGame {
-                game_id: "test_game".to_string(),
-                engine_version: None,
-            },
+            target: TargetGame::new("test_game"),
             assets: None,
             dependencies,
             overrides: BTreeMap::new(),

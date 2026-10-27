@@ -2906,8 +2906,21 @@ impl App {
                             .map(|m| PathBuf::from(".perihelion/cache/mods").join(&m.id))
                             .collect();
 
+                        let base_dir = manifest
+                            .target
+                            .game_path
+                            .clone()
+                            .or_else(|| {
+                                self.game_catalog
+                                    .iter()
+                                    .find(|c| c.game_id == manifest.target.game_id)
+                                    .filter(|c| !c.install_dir.is_empty())
+                                    .map(|c| PathBuf::from(&c.install_dir))
+                            })
+                            .unwrap_or_else(|| PathBuf::from("."));
+
                         let vfs_plan = peri_vfs::VfsPlan::new(
-                            PathBuf::from("."),
+                            base_dir,
                             PathBuf::from(format!(
                                 ".perihelion/profiles/{}/merged",
                                 manifest.target.game_id
@@ -3073,6 +3086,7 @@ impl App {
                     name: name.clone(),
                     steam_app_id,
                     default_executable,
+                    game_path: None,
                     mappings,
                 };
 
@@ -3192,6 +3206,7 @@ impl App {
                     name: game.name.clone(),
                     steam_app_id: Some(game.app_id),
                     default_executable: game.executable.clone(),
+                    game_path: Some(game.install_path.clone()),
                     mappings,
                 };
 

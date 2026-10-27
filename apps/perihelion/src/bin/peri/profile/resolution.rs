@@ -188,8 +188,13 @@ pub fn scan_all_profiles(workspace: &Path, steam_libs: &[PathBuf]) -> Vec<Discov
     discovered
 }
 
-/// Checks whether a game is installed in the given Steam library directories.
+/// Checks whether a game is installed in the given Steam library directories or configured game path.
 pub fn is_game_installed(profile: &GameProfile, steam_libs: &[PathBuf]) -> bool {
+    if let Some(ref path) = profile.game_path {
+        if path.exists() {
+            return true;
+        }
+    }
     if let Some(app_id) = profile.steam_app_id {
         for lib in steam_libs {
             if lib

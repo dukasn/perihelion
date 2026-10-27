@@ -221,6 +221,17 @@ pub struct RunArgs {
     )]
     pub workspace: PathBuf,
 
+    /// Base game installation directory to mount as bottom lowerdir layer (overrides PERI_BASE_GAME and profile settings)
+    #[arg(
+        long = "base-path",
+        alias = "game-path",
+        env = "PERI_BASE_GAME",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath,
+        help_heading = "Execution Options"
+    )]
+    pub base_path: Option<PathBuf>,
+
     /// Simulate OverlayFS mount arguments without spawning kernel namespaces
     #[arg(long, help_heading = "Execution Options")]
     pub dry_run: bool,
@@ -326,7 +337,13 @@ pub struct ProfileNewArgs {
     pub steam_id: Option<u64>,
 
     /// Installation path of the game to inspect and auto-detect engine layout
-    #[arg(long = "game-path", value_name = "DIR", value_hint = ValueHint::DirPath)]
+    #[arg(
+        long = "game-path",
+        alias = "base-path",
+        env = "PERI_BASE_GAME",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath
+    )]
     pub game_path: Option<PathBuf>,
 
     /// Default executable binary path relative to game root (e.g., bin/game.exe)

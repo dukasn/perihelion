@@ -46,6 +46,8 @@ pub struct GameProfile {
     pub steam_app_id: Option<u64>,
     #[serde(default)]
     pub default_executable: Option<String>,
+    #[serde(default, alias = "base_path")]
+    pub game_path: Option<PathBuf>,
     #[serde(default)]
     pub mappings: Vec<LayoutMapping>,
 }
@@ -57,6 +59,7 @@ impl GameProfile {
             name: name.into(),
             steam_app_id: None,
             default_executable: None,
+            game_path: None,
             mappings: Vec::new(),
         }
     }
@@ -75,6 +78,7 @@ impl GameProfile {
             name: id.to_string(),
             steam_app_id: None,
             default_executable: None,
+            game_path: None,
             mappings: Vec::new(),
         }
     }
@@ -111,6 +115,7 @@ impl GameProfile {
             name: name.map(|n| n.into()).unwrap_or_else(|| sig.name.clone()),
             steam_app_id: None,
             default_executable: None,
+            game_path: None,
             mappings: sig.mappings.clone(),
         }
     }
@@ -127,6 +132,7 @@ mod tests {
             name: "Test Game".to_string(),
             steam_app_id: Some(12345),
             default_executable: Some("bin/game.exe".to_string()),
+            game_path: None,
             mappings: vec![LayoutMapping {
                 from_prefix: "mods".to_string(),
                 to_prefix: "archive/pc/mod".to_string(),
@@ -144,6 +150,7 @@ mod tests {
             name: "Test Game".to_string(),
             steam_app_id: Some(12345),
             default_executable: Some("game.exe".to_string()),
+            game_path: None,
             mappings: vec![LayoutMapping {
                 from_prefix: "SKSE".to_string(),
                 to_prefix: "Data/SKSE".to_string(),
@@ -161,6 +168,7 @@ id = "fallout4"
 name = "Fallout 4"
 steam_app_id = 377160
 default_executable = "Fallout4.exe"
+game_path = "/games/fallout4"
 
 [[mappings]]
 from_prefix = "Data"
@@ -170,9 +178,11 @@ to_prefix = "Data"
         assert_eq!(profile.id, "fallout4");
         assert_eq!(profile.steam_app_id, Some(377160));
         assert_eq!(profile.default_executable, Some("Fallout4.exe".to_string()));
+        assert_eq!(profile.game_path, Some(PathBuf::from("/games/fallout4")));
 
         let serialized = profile.to_toml_str().expect("Should serialize TOML");
         assert!(serialized.contains("fallout4"));
+        assert!(serialized.contains("/games/fallout4"));
     }
 
     #[test]
@@ -182,6 +192,7 @@ to_prefix = "Data"
             name: "Custom Cyberpunk".to_string(),
             steam_app_id: None,
             default_executable: Some("custom.exe".to_string()),
+            game_path: None,
             mappings: Vec::new(),
         };
 

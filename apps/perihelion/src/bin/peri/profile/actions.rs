@@ -119,6 +119,7 @@ pub async fn handle_new(args: ProfileNewArgs) -> Result<(), CliError> {
         name: name.clone(),
         steam_app_id,
         default_executable: default_executable.clone(),
+        game_path: detected_install_dir.clone(),
         mappings: mappings.clone(),
     };
 
@@ -263,6 +264,9 @@ pub async fn handle_show(args: ProfileShowArgs) -> Result<(), CliError> {
         "  Default Executable: {}",
         profile.default_executable.as_deref().unwrap_or("game.exe")
     );
+    if let Some(ref gp) = profile.game_path {
+        println!("  Game Path:          {}", gp.display());
+    }
 
     if profile.mappings.is_empty() {
         println!("  VFS Layout Rules:   None (direct 1:1 overlay without prefix translation)");

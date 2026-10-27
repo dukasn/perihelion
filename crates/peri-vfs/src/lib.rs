@@ -19,9 +19,11 @@
 //! Handles Linux mount namespaces and OverlayFS stack orchestration to deliver
 //! zero-overhead, non-destructive game sandboxing.
 
+pub mod base_game;
 pub mod engine;
 pub mod proton;
 
+pub use base_game::{resolve_base_game_path, BaseGameQuery, BaseGameSource, ResolvedBaseGame};
 pub use engine::{
     detect_engine_layout, find_executable_for_engine, probe_game_directory, wildcard_match,
 };
@@ -62,6 +64,9 @@ pub enum VfsError {
 
     #[error("Execution failure in sandbox: {0}")]
     ExecutionFailed(String),
+
+    #[error("Base game resolution failed: {0}")]
+    BaseGameNotFound(String),
 }
 
 /// Represents an OverlayFS configuration plan derived from game profiles and the mod DAG.
@@ -69,6 +74,8 @@ pub enum VfsError {
 pub struct VfsPlan {
     /// Base game directory (bottom-most lower directory)
     pub base_dir: PathBuf,
+    /// Arbitrary lower root directories (bottom-most lower directories)
+    pub lower_roots: Vec<PathBuf>,
     /// Mod directories ordered from lowest precedence to highest precedence
     pub layers: Vec<PathBuf>,
     /// Optional writable upper directory for modifications/saves
@@ -82,7 +89,8 @@ pub struct VfsPlan {
 impl VfsPlan {
     pub fn new(base_dir: PathBuf, mount_point: PathBuf) -> Self {
         Self {
-            base_dir,
+            base_dir: base_dir.clone(),
+            lower_roots: vec![base_dir],
             layers: Vec::new(),
             upper_dir: None,
             work_dir: None,
@@ -90,8 +98,40 @@ impl VfsPlan {
         }
     }
 
+    pub fn from_roots(lower_roots: Vec<PathBuf>, mount_point: PathBuf) -> Result<Self, VfsError> {
+        if lower_roots.is_empty() {
+            return Err(VfsError::InvalidConfig(
+                "At least one lower root must be specified".into(),
+            ));
+        }
+        let base_dir = lower_roots.first().unwrap().clone();
+        Ok(Self {
+            base_dir,
+            lower_roots,
+            layers: Vec::new(),
+            upper_dir: None,
+            work_dir: None,
+            mount_point,
+        })
+    }
+
     pub fn with_layers(mut self, layers: Vec<PathBuf>) -> Self {
         self.layers = layers;
+        self
+    }
+
+    pub fn with_lower_root(mut self, root: PathBuf) -> Self {
+        if !self.lower_roots.contains(&root) {
+            self.lower_roots.push(root);
+        }
+        self
+    }
+
+    pub fn with_lower_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        if let Some(first) = roots.first() {
+            self.base_dir = first.clone();
+        }
+        self.lower_roots = roots;
         self
     }
 
@@ -104,7 +144,7 @@ impl VfsPlan {
     /// Formats the OverlayFS mount options string.
     ///
     /// OverlayFS lowerdir takes precedence from left to right:
-    /// `lowerdir=highest_precedence:...:lowest_precedence:base_game`
+    /// `lowerdir=highest_precedence:...:lowest_precedence:base_root1:...:base_rootN`
     pub fn format_mount_options(&self) -> Result<String, VfsError> {
         let mut lower_paths: Vec<String> = Vec::new();
 
@@ -118,13 +158,26 @@ impl VfsPlan {
             lower_paths.push(canon);
         }
 
-        let base_canon = self
-            .base_dir
-            .canonicalize()
-            .unwrap_or_else(|_| self.base_dir.clone())
-            .to_string_lossy()
-            .into_owned();
-        lower_paths.push(base_canon);
+        let roots = if self.lower_roots.is_empty() {
+            vec![self.base_dir.clone()]
+        } else {
+            self.lower_roots.clone()
+        };
+
+        for root in roots {
+            let canon = root
+                .canonicalize()
+                .unwrap_or_else(|_| root.clone())
+                .to_string_lossy()
+                .into_owned();
+            lower_paths.push(canon);
+        }
+
+        if lower_paths.is_empty() {
+            return Err(VfsError::InvalidConfig(
+                "At least one lowerdir layer or base root must be provided for OverlayFS".into(),
+            ));
+        }
 
         let lowerdir_opt = format!("lowerdir={}", lower_paths.join(":"));
 
@@ -470,6 +523,46 @@ mod tests {
         let opts = plan.format_mount_options().unwrap();
         assert!(opts.contains("upperdir="));
         assert!(opts.contains("workdir="));
+    }
+
+    #[test]
+    fn test_vfs_plan_arbitrary_absolute_lower_roots() {
+        let plan = VfsPlan::new(
+            PathBuf::from("/var/games/skyrim_base"),
+            PathBuf::from("/tmp/sandbox/mount"),
+        )
+        .with_lower_root(PathBuf::from("/opt/games/skyrim_dlc"))
+        .with_layers(vec![PathBuf::from("/home/user/.mods/skse")]);
+
+        let opts = plan.format_mount_options().unwrap();
+        assert!(opts.starts_with("lowerdir="));
+        let lowerdirs = opts.strip_prefix("lowerdir=").unwrap();
+        let parts: Vec<&str> = lowerdirs.split(':').collect();
+        assert_eq!(parts.len(), 3);
+        assert!(parts[0].ends_with("skse"));
+        assert!(parts[1].ends_with("skyrim_base"));
+        assert!(parts[2].ends_with("skyrim_dlc"));
+    }
+
+    #[test]
+    fn test_vfs_plan_from_roots() {
+        let plan = VfsPlan::from_roots(
+            vec![
+                PathBuf::from("/opt/storage/game_dlc"),
+                PathBuf::from("/opt/storage/game_base"),
+            ],
+            PathBuf::from("/mnt/target"),
+        )
+        .unwrap()
+        .with_layers(vec![PathBuf::from("/mods/mod_a")]);
+
+        let opts = plan.format_mount_options().unwrap();
+        let lowerdirs = opts.strip_prefix("lowerdir=").unwrap();
+        let parts: Vec<&str> = lowerdirs.split(':').collect();
+        assert_eq!(parts.len(), 3);
+        assert!(parts[0].ends_with("mod_a"));
+        assert!(parts[1].ends_with("game_dlc"));
+        assert!(parts[2].ends_with("game_base"));
     }
 
     #[test]

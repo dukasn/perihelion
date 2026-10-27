@@ -139,7 +139,7 @@ mappings = [
         game_id: "starfield".to_string(),
         name: None,
         steam_id: None,
-        game_path: Some(mock_game),
+        game_path: Some(mock_game.clone()),
         exec: None,
         mappings: vec![],
         global: false,
@@ -159,6 +159,7 @@ mappings = [
     // Engine layout auto-detected: mappings populated from bethesda_creation signature
     assert!(parsed.mappings.iter().any(|m| m.from_prefix == "SKSE"));
     assert_eq!(parsed.default_executable.as_deref(), Some("Starfield.exe"));
+    assert_eq!(parsed.game_path, Some(mock_game));
 }
 
 #[test]

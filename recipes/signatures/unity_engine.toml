@@ -13,3 +13,4 @@ mappings = [
     { from = "BepInEx", to = "BepInEx" },
 ]
 content_extensions = ["assets", "bundle"]
+

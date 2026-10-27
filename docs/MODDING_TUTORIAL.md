@@ -126,13 +126,21 @@ This generates:
 - `peri.toml`: The declarative manifest tracking required packages, version bounds, priority rules, and explicit load orders.
 - `.perihelion/`: Workspace state cache (`cache/mods`, `extracted`, `upper`, `work`, `mnt`).
 
-Link your pristine vanilla game directory as `base_game`:
+Perihelion resolves the vanilla game path dynamically through a 6-tier ladder:
+1. CLI flag `--base-path <DIR>`
+2. Environment variable `PERI_BASE_GAME`
+3. Manifest `[target] game_path` in `peri.toml`
+4. Game profile `game_path`
+5. Storefront auto-discovery (Steam App ID)
+6. Workspace `./base_game` directory or symlink
 
-```bash
-ln -s "/path/to/clean/game/installation" base_game
+Set it once in `peri.toml`, pass `--base-path` at launch, or let auto-discovery locate your Steam install:
+
+```toml
+[target]
+game_id = "<game_id>"
+game_path = "/path/to/clean/game/installation"
 ```
-
-OverlayFS anchors this link as the bottom-most lowerdir layer.
 
 ---
 
@@ -333,14 +341,12 @@ cd ~/Games/SkyrimWorkspace
 peri init skyrim_se --name "Nordic Overhaul"
 ```
 
-Link your vanilla Skyrim install as `base_game`:
+If you ran `peri profile new` with `--from-steam 489830`, Steam auto-discovery resolved your game root already. For standalone builds or manual overrides, pass `--base-path` or set `PERI_BASE_GAME`:
 
 ```bash
-# Native Steam path:
-ln -s "$HOME/.local/share/Steam/steamapps/common/Skyrim Special Edition" base_game
-
-# Flatpak Steam path (if applicable):
-# ln -s "$HOME/.var/app/com.valvesoftware.Steam/data/Steam/steamapps/common/Skyrim Special Edition" base_game
+export PERI_BASE_GAME="$HOME/.local/share/Steam/steamapps/common/Skyrim Special Edition"
+# Flatpak path:
+# export PERI_BASE_GAME="$HOME/.var/app/com.valvesoftware.Steam/data/Steam/steamapps/common/Skyrim Special Edition"
 ```
 
 ---

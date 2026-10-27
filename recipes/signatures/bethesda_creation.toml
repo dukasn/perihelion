@@ -16,3 +16,4 @@ mappings = [
     { from = "SFSE", to = "Data/SFSE" },
 ]
 content_extensions = ["esp", "esm", "esl", "ba2", "bsa", "nif", "dds"]
+

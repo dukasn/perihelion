@@ -17,3 +17,4 @@ mappings = [
     { from = "bin", to = "bin" },
 ]
 content_extensions = ["archive", "reds", "lua"]
+
