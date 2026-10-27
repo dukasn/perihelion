@@ -157,6 +157,67 @@ pub struct ActiveGameHandle {
     pub snapshot_id: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameWizardField {
+    GameId,
+    Name,
+    SteamAppId,
+    Executable,
+    Mappings,
+    IsGlobal,
+}
+
+impl GameWizardField {
+    pub fn next(&self) -> Self {
+        match self {
+            Self::GameId => Self::Name,
+            Self::Name => Self::SteamAppId,
+            Self::SteamAppId => Self::Executable,
+            Self::Executable => Self::Mappings,
+            Self::Mappings => Self::IsGlobal,
+            Self::IsGlobal => Self::GameId,
+        }
+    }
+
+    pub fn prev(&self) -> Self {
+        match self {
+            Self::GameId => Self::IsGlobal,
+            Self::Name => Self::GameId,
+            Self::SteamAppId => Self::Name,
+            Self::Executable => Self::SteamAppId,
+            Self::Mappings => Self::Executable,
+            Self::IsGlobal => Self::Mappings,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GameWizardState {
+    pub game_id: String,
+    pub name: String,
+    pub steam_app_id: String,
+    pub executable: String,
+    pub mappings: String,
+    pub is_global: bool,
+    pub active_field: GameWizardField,
+    pub error: Option<String>,
+}
+
+impl Default for GameWizardState {
+    fn default() -> Self {
+        Self {
+            game_id: String::new(),
+            name: String::new(),
+            steam_app_id: String::new(),
+            executable: String::new(),
+            mappings: String::new(),
+            is_global: true,
+            active_field: GameWizardField::GameId,
+            error: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct App {
     pub active_tab: Tab,
@@ -200,6 +261,12 @@ pub struct App {
     pub profile_input_error: Option<String>,
     pub diagnostics: Vec<DiagnosticAlert>,
     pub show_help: bool,
+    pub show_game_wizard: bool,
+    pub game_wizard: GameWizardState,
+    pub show_steam_importer: bool,
+    pub steam_games: Vec<peri_vfs::DiscoveredSteamApp>,
+    pub steam_importer_cursor: usize,
+    pub steam_importer_is_global: bool,
     pub status_message: Option<String>,
     pub status_level: StatusLevel,
     pub should_quit: bool,
@@ -211,6 +278,64 @@ pub struct App {
     pub theme: crate::theme::Theme,
     pub committed_theme: crate::theme::Theme,
     pub theme_picker_cursor: usize,
+    pub workspace_root: PathBuf,
+    pub config: peri_core::GlobalConfig,
+}
+
+pub fn load_app_config(workspace_root: &Path) -> peri_core::GlobalConfig {
+    // 1. Check workspace configuration
+    let ws_config = workspace_root
+        .join(".perihelion")
+        .join(peri_core::CONFIG_FILENAME);
+    if ws_config.exists() {
+        if let Ok(content) = std::fs::read_to_string(&ws_config) {
+            if let Ok(cfg) = peri_core::GlobalConfig::from_toml_str(&content) {
+                return cfg;
+            }
+        }
+    }
+
+    // 2. Check XDG_CONFIG_HOME
+    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
+        let user_config = PathBuf::from(config_home)
+            .join("perihelion")
+            .join(peri_core::CONFIG_FILENAME);
+        if user_config.exists() {
+            if let Ok(content) = std::fs::read_to_string(&user_config) {
+                if let Ok(cfg) = peri_core::GlobalConfig::from_toml_str(&content) {
+                    return cfg;
+                }
+            }
+        }
+    }
+
+    // 3. Check ProjectDirs
+    if let Some(proj_dirs) = directories::ProjectDirs::from("com", "perihelion", "perihelion") {
+        let config_file = proj_dirs.config_dir().join(peri_core::CONFIG_FILENAME);
+        if config_file.exists() {
+            if let Ok(content) = std::fs::read_to_string(&config_file) {
+                if let Ok(cfg) = peri_core::GlobalConfig::from_toml_str(&content) {
+                    return cfg;
+                }
+            }
+        }
+    }
+
+    // 4. Check ~/.config/perihelion/config.toml
+    if let Ok(home) = std::env::var("HOME") {
+        let config_file = PathBuf::from(home)
+            .join(".config/perihelion")
+            .join(peri_core::CONFIG_FILENAME);
+        if config_file.exists() {
+            if let Ok(content) = std::fs::read_to_string(&config_file) {
+                if let Ok(cfg) = peri_core::GlobalConfig::from_toml_str(&content) {
+                    return cfg;
+                }
+            }
+        }
+    }
+
+    peri_core::GlobalConfig::default()
 }
 
 impl Default for App {
@@ -221,11 +346,19 @@ impl Default for App {
 
 impl App {
     pub fn new() -> Self {
+        Self::with_workspace(".")
+    }
+
+    pub fn with_workspace(workspace: impl Into<PathBuf>) -> Self {
+        let workspace_root: PathBuf = workspace.into();
+        let app_config = load_app_config(&workspace_root);
         let (download_tx, download_rx) = std::sync::mpsc::channel();
         let initial_theme = crate::theme::load_configured_theme();
         crate::theme::set_active_theme(initial_theme.clone());
 
         let mut app = Self {
+            workspace_root,
+            config: app_config,
             active_tab: Tab::Overview,
             overview_focus: OverviewFocus::CommandInput,
             overview_input: String::new(),
@@ -267,6 +400,12 @@ impl App {
             profile_input_error: None,
             diagnostics: Vec::new(),
             show_help: false,
+            show_game_wizard: false,
+            game_wizard: GameWizardState::default(),
+            show_steam_importer: false,
+            steam_games: Vec::new(),
+            steam_importer_cursor: 0,
+            steam_importer_is_global: true,
             status_message: None,
             status_level: StatusLevel::Info,
             should_quit: false,
@@ -374,6 +513,14 @@ impl App {
             || self.download_input_active
             || self.profile_input_active
             || self.overview_input_active
+    }
+
+    pub fn is_any_modal_open(&self) -> bool {
+        self.show_help || self.show_game_wizard || self.show_steam_importer
+    }
+
+    pub fn selected_target_game(&self) -> Option<&GameCatalogEntry> {
+        self.game_catalog.get(self.new_profile_game_idx)
     }
 
     /// Automatically accepts and applies an inline autocomplete suggestion if available.
@@ -616,15 +763,25 @@ impl App {
     }
 
     pub fn discover_system_and_profiles(&mut self) {
-        let steam_root = peri_vfs::SteamDiscovery::find_active_steam_root();
+        let steam_provider = self.config.provider("steam");
+        let steam_root =
+            peri_vfs::SteamDiscovery::find_active_steam_root_with_config(&steam_provider);
         let libraries = steam_root
             .as_ref()
-            .map(|r| peri_vfs::SteamDiscovery::discover_library_folders(r))
+            .map(|r| {
+                peri_vfs::SteamDiscovery::discover_library_folders_with_config(r, &steam_provider)
+            })
             .unwrap_or_default();
 
         let proton_tools = steam_root
             .as_ref()
-            .map(|r| peri_vfs::SteamDiscovery::discover_proton_versions(r, &libraries))
+            .map(|r| {
+                peri_vfs::SteamDiscovery::discover_proton_versions_with_config(
+                    r,
+                    &libraries,
+                    &steam_provider,
+                )
+            })
             .unwrap_or_default();
 
         if let Some(tool) = proton_tools.first() {
@@ -633,32 +790,41 @@ impl App {
             self.proton_version = "System Default / Wine".to_string();
         }
 
-        let mut custom_profiles = Vec::new();
-        let ws_profiles = Path::new(".perihelion/profiles");
-        if ws_profiles.exists() {
-            if let Ok(entries) = std::fs::read_dir(ws_profiles) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().and_then(|s| s.to_str()) == Some("toml") {
-                        if let Ok(content) = std::fs::read_to_string(path) {
-                            if let Ok(profile) = GameProfile::from_toml_str(&content) {
-                                custom_profiles.push(profile);
-                            }
-                        }
-                    }
-                }
-            }
+        let mut declared_profiles = Vec::new();
+        let mut scan_dirs = Vec::new();
+
+        // 1. Workspace profiles
+        scan_dirs.push(self.workspace_root.join(".perihelion/profiles"));
+
+        // 2. User config & data profiles
+        if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
+            scan_dirs.push(PathBuf::from(xdg_config).join("perihelion/profiles"));
+        } else if let Ok(home) = std::env::var("HOME") {
+            scan_dirs.push(PathBuf::from(home).join(".config/perihelion/profiles"));
         }
-        if let Ok(home) = std::env::var("HOME") {
-            let user_profiles = PathBuf::from(home).join(".config/perihelion/profiles");
-            if user_profiles.exists() {
-                if let Ok(entries) = std::fs::read_dir(user_profiles) {
+        if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {
+            scan_dirs.push(PathBuf::from(xdg_data).join("perihelion/profiles"));
+        } else if let Ok(home) = std::env::var("HOME") {
+            scan_dirs.push(PathBuf::from(home).join(".local/share/perihelion/profiles"));
+        }
+
+        // 3. System share profiles
+        scan_dirs.push(PathBuf::from("/usr/local/share/perihelion/profiles"));
+        scan_dirs.push(PathBuf::from("/usr/share/perihelion/profiles"));
+
+        for dir in scan_dirs {
+            if dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if path.extension().and_then(|s| s.to_str()) == Some("toml") {
                             if let Ok(content) = std::fs::read_to_string(path) {
                                 if let Ok(profile) = GameProfile::from_toml_str(&content) {
-                                    custom_profiles.push(profile);
+                                    if !declared_profiles.iter().any(|p: &GameProfile| {
+                                        p.id.eq_ignore_ascii_case(&profile.id)
+                                    }) {
+                                        declared_profiles.push(profile);
+                                    }
                                 }
                             }
                         }
@@ -669,7 +835,7 @@ impl App {
 
         let default_proton = self.proton_version.clone();
 
-        // 1. Agnostic generic template is first in catalog, followed by built-in templates
+        // 1. Agnostic generic template is first in catalog, followed by discovered declarative profiles
         let mut catalog = vec![GameCatalogEntry {
             game_id: "generic".to_string(),
             short_name: "Generic / Custom Game".to_string(),
@@ -688,7 +854,7 @@ impl App {
             },
         }];
 
-        for gp in GameProfile::builtin_profiles() {
+        for gp in &declared_profiles {
             let mut install_dir = format!("~/.local/share/Steam/steamapps/common/{}", gp.name);
             let mut installed = false;
             if let Some(_app_id) = gp.steam_app_id {
@@ -739,96 +905,44 @@ impl App {
             });
         }
 
-        for custom in &custom_profiles {
-            if !catalog
-                .iter()
-                .any(|g| g.game_id.eq_ignore_ascii_case(&custom.id))
-            {
-                catalog.push(GameCatalogEntry {
-                    game_id: custom.id.clone(),
-                    short_name: custom.name.clone(),
-                    full_name: custom.name.clone(),
-                    steam_app_id: custom.steam_app_id.unwrap_or(0),
-                    executable: custom
-                        .default_executable
-                        .clone()
-                        .unwrap_or_else(|| "game.exe".to_string()),
-                    default_proton: default_proton.clone(),
-                    install_dir: ".".to_string(),
-                    mappings: custom.mappings.clone(),
-                    default_diagnostic: DiagnosticAlert {
-                        level: "OK".to_string(),
-                        title: "Custom Profile Loaded".to_string(),
-                        message: format!("Profile '{}' loaded from config.", custom.name),
-                        action_text: "[VERIFIED]".to_string(),
-                        resolved: true,
-                    },
-                });
-            }
-        }
-
         self.game_catalog = catalog;
         self.new_profile_game_idx = 0;
 
-        // 2. Profiles: ONLY populate if user actually configured profile TOML files on disk.
-        // Fresh installs start completely clean and agnostically generic.
-        self.profiles = custom_profiles
-            .into_iter()
-            .enumerate()
-            .map(|(idx, cp)| ProfileItem {
-                name: cp.name.clone(),
-                game_id: cp.id.clone(),
-                game_short: cp.name.clone(),
-                game_full_name: cp.name.clone(),
-                steam_app_id: cp.steam_app_id.unwrap_or(0),
-                executable: cp
-                    .default_executable
-                    .clone()
-                    .unwrap_or_else(|| "game.exe".to_string()),
-                install_dir: ".".to_string(),
-                upper_dir: format!(".perihelion/profiles/{}/upper", cp.id),
-                mappings: cp.mappings.clone(),
-                desc: format!("Configured profile for {}", cp.name),
-                mod_count: 0,
-                proton_version: default_proton.clone(),
-                is_active: idx == 0,
-                diagnostic: DiagnosticAlert {
-                    level: "OK".to_string(),
-                    title: "Configured Profile".to_string(),
-                    message: "User profile loaded from disk.".to_string(),
-                    action_text: "[VERIFIED]".to_string(),
-                    resolved: true,
-                },
-            })
-            .collect();
-
-        self.diagnostics = if let Some(first) = self.profiles.first() {
-            vec![first.diagnostic.clone()]
-        } else {
-            Vec::new()
-        };
+        // Fresh instances start clean. Profiles are loaded from active workspace (peri.toml) or user creation.
+        self.profiles = Vec::new();
+        self.diagnostics = Vec::new();
     }
 
     #[allow(dead_code)]
     pub fn populate_test_fixture(&mut self) {
-        let skyrim_gp = GameProfile::skyrim_se();
-        let cp2077_gp = GameProfile::cyberpunk_2077();
-        let starfield_gp = GameProfile::starfield();
-
         self.game_catalog = vec![
             GameCatalogEntry {
-                game_id: skyrim_gp.id.clone(),
+                game_id: "skyrim_se".to_string(),
                 short_name: "Skyrim SE".to_string(),
-                full_name: skyrim_gp.name.clone(),
-                steam_app_id: skyrim_gp.steam_app_id.unwrap_or(489830),
-                executable: skyrim_gp
-                    .default_executable
-                    .clone()
-                    .unwrap_or_else(|| "SkyrimSE.exe".to_string()),
+                full_name: "The Elder Scrolls V: Skyrim Special Edition".to_string(),
+                steam_app_id: 489830,
+                executable: "SkyrimSE.exe".to_string(),
                 default_proton: "GE-Proton 9-23".to_string(),
                 install_dir: "~/.local/share/Steam/steamapps/common/Skyrim Special Edition"
                     .to_string(),
-                mappings: skyrim_gp.mappings.clone(),
+                mappings: vec![
+                    LayoutMapping {
+                        from_prefix: "Data".to_string(),
+                        to_prefix: "Data".to_string(),
+                    },
+                    LayoutMapping {
+                        from_prefix: "data".to_string(),
+                        to_prefix: "Data".to_string(),
+                    },
+                    LayoutMapping {
+                        from_prefix: "SKSE".to_string(),
+                        to_prefix: "Data/SKSE".to_string(),
+                    },
+                    LayoutMapping {
+                        from_prefix: "skse".to_string(),
+                        to_prefix: "Data/SKSE".to_string(),
+                    },
+                ],
                 default_diagnostic: DiagnosticAlert {
                     level: "WARN".to_string(),
                     title: "Script Extender (SKSE64) Recommended".to_string(),
@@ -840,17 +954,31 @@ impl App {
                 },
             },
             GameCatalogEntry {
-                game_id: cp2077_gp.id.clone(),
+                game_id: "cyberpunk_2077".to_string(),
                 short_name: "Cyberpunk 2077".to_string(),
-                full_name: cp2077_gp.name.clone(),
-                steam_app_id: cp2077_gp.steam_app_id.unwrap_or(1091500),
-                executable: cp2077_gp
-                    .default_executable
-                    .clone()
-                    .unwrap_or_else(|| "bin/x64/Cyberpunk2077.exe".to_string()),
+                full_name: "Cyberpunk 2077".to_string(),
+                steam_app_id: 1091500,
+                executable: "bin/x64/Cyberpunk2077.exe".to_string(),
                 default_proton: "GE-Proton 9-20".to_string(),
                 install_dir: "~/.local/share/Steam/steamapps/common/Cyberpunk 2077".to_string(),
-                mappings: cp2077_gp.mappings.clone(),
+                mappings: vec![
+                    LayoutMapping {
+                        from_prefix: "archive".to_string(),
+                        to_prefix: "archive".to_string(),
+                    },
+                    LayoutMapping {
+                        from_prefix: "bin".to_string(),
+                        to_prefix: "bin".to_string(),
+                    },
+                    LayoutMapping {
+                        from_prefix: "r6".to_string(),
+                        to_prefix: "r6".to_string(),
+                    },
+                    LayoutMapping {
+                        from_prefix: "mods".to_string(),
+                        to_prefix: "archive/pc/mod".to_string(),
+                    },
+                ],
                 default_diagnostic: DiagnosticAlert {
                     level: "WARN".to_string(),
                     title: "RED4ext & Cyber Engine Tweaks Check".to_string(),
@@ -862,17 +990,23 @@ impl App {
                 },
             },
             GameCatalogEntry {
-                game_id: starfield_gp.id.clone(),
+                game_id: "starfield".to_string(),
                 short_name: "Starfield".to_string(),
-                full_name: starfield_gp.name.clone(),
-                steam_app_id: starfield_gp.steam_app_id.unwrap_or(1716740),
-                executable: starfield_gp
-                    .default_executable
-                    .clone()
-                    .unwrap_or_else(|| "Starfield.exe".to_string()),
+                full_name: "Starfield".to_string(),
+                steam_app_id: 1716740,
+                executable: "Starfield.exe".to_string(),
                 default_proton: "Valve Proton Experimental".to_string(),
                 install_dir: "~/.local/share/Steam/steamapps/common/Starfield".to_string(),
-                mappings: starfield_gp.mappings.clone(),
+                mappings: vec![
+                    LayoutMapping {
+                        from_prefix: "Data".to_string(),
+                        to_prefix: "Data".to_string(),
+                    },
+                    LayoutMapping {
+                        from_prefix: "data".to_string(),
+                        to_prefix: "Data".to_string(),
+                    },
+                ],
                 default_diagnostic: DiagnosticAlert {
                     level: "OK".to_string(),
                     title: "Starfield Custom.ini & Archive Invalidation".to_string(),
@@ -1107,15 +1241,20 @@ impl App {
     }
 
     pub fn try_load_workspace(&mut self) {
-        if !Path::new("peri.toml").exists() {
+        let manifest_path = self.workspace_root.join("peri.toml");
+        if !manifest_path.exists() {
             self.game_title = "No Active Workspace".to_string();
+            for prof in &mut self.profiles {
+                prof.is_active = false;
+            }
+            self.diagnostics.clear();
             self.mods.clear();
             self.conflicts.clear();
             self.resolved_conflicts.clear();
             return;
         }
 
-        let content = match std::fs::read_to_string("peri.toml") {
+        let content = match std::fs::read_to_string(&manifest_path) {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -2726,10 +2865,310 @@ impl App {
             }
             Action::CloseModal => {
                 self.show_help = false;
+                self.show_game_wizard = false;
+                self.show_steam_importer = false;
                 self.overview_input_active = false;
                 self.search_active = false;
                 self.download_input_active = false;
                 self.profile_input_active = false;
+            }
+            Action::OpenGameWizard => {
+                self.show_game_wizard = true;
+                self.show_steam_importer = false;
+                self.show_help = false;
+                self.game_wizard = GameWizardState::default();
+            }
+            Action::CloseGameWizard => {
+                self.show_game_wizard = false;
+            }
+            Action::CycleWizardField => {
+                self.game_wizard.active_field = self.game_wizard.active_field.next();
+            }
+            Action::CycleWizardFieldReverse => {
+                self.game_wizard.active_field = self.game_wizard.active_field.prev();
+            }
+            Action::ToggleWizardLocation => {
+                self.game_wizard.is_global = !self.game_wizard.is_global;
+            }
+            Action::SaveGameWizard => {
+                let raw_id = self.game_wizard.game_id.trim();
+                if raw_id.is_empty() {
+                    self.game_wizard.error = Some("Game ID cannot be empty".to_string());
+                    return;
+                }
+                let slug: String = raw_id
+                    .to_lowercase()
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == '_' || c == '-' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect();
+
+                let name = if self.game_wizard.name.trim().is_empty() {
+                    slug.replace('_', " ")
+                        .split_whitespace()
+                        .map(|word| {
+                            let mut chars = word.chars();
+                            match chars.next() {
+                                None => String::new(),
+                                Some(first) => {
+                                    first.to_uppercase().collect::<String>() + chars.as_str()
+                                }
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                } else {
+                    self.game_wizard.name.trim().to_string()
+                };
+
+                let steam_app_id = if self.game_wizard.steam_app_id.trim().is_empty() {
+                    None
+                } else {
+                    match self.game_wizard.steam_app_id.trim().parse::<u64>() {
+                        Ok(id) => Some(id),
+                        Err(_) => {
+                            self.game_wizard.error =
+                                Some("Steam App ID must be an integer".to_string());
+                            return;
+                        }
+                    }
+                };
+
+                let default_executable = if self.game_wizard.executable.trim().is_empty() {
+                    None
+                } else {
+                    Some(self.game_wizard.executable.trim().to_string())
+                };
+
+                let mut mappings = Vec::new();
+                if !self.game_wizard.mappings.trim().is_empty() {
+                    for part in self.game_wizard.mappings.split(',') {
+                        let part = part.trim();
+                        if part.is_empty() {
+                            continue;
+                        }
+                        let (from, to) = if let Some((f, t)) = part.split_once('=') {
+                            (f.trim(), t.trim())
+                        } else if let Some((f, t)) = part.split_once("->") {
+                            (f.trim(), t.trim())
+                        } else if let Some((f, t)) = part.split_once(':') {
+                            (f.trim(), t.trim())
+                        } else {
+                            (part, part)
+                        };
+                        mappings.push(LayoutMapping {
+                            from_prefix: from.trim_matches('/').to_string(),
+                            to_prefix: to.trim_matches('/').to_string(),
+                        });
+                    }
+                }
+
+                if mappings.is_empty() {
+                    mappings = self.config.resolve_mappings(steam_app_id, Some(&slug));
+                }
+
+                let profile = GameProfile {
+                    id: slug.clone(),
+                    name: name.clone(),
+                    steam_app_id,
+                    default_executable,
+                    mappings,
+                };
+
+                let target_dir = if self.game_wizard.is_global {
+                    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
+                        PathBuf::from(config_home).join("perihelion/profiles")
+                    } else if let Ok(home) = std::env::var("HOME") {
+                        PathBuf::from(home).join(".config/perihelion/profiles")
+                    } else {
+                        self.game_wizard.error =
+                            Some("Cannot resolve user home directory".to_string());
+                        return;
+                    }
+                } else {
+                    self.workspace_root.join(".perihelion/profiles")
+                };
+
+                if let Err(e) = std::fs::create_dir_all(&target_dir) {
+                    self.game_wizard.error = Some(format!("Failed to create profile dir: {}", e));
+                    return;
+                }
+
+                let target_file = target_dir.join(format!("{}.toml", slug));
+                match profile.to_toml_str() {
+                    Ok(toml_str) => {
+                        if let Err(e) = std::fs::write(&target_file, toml_str) {
+                            self.game_wizard.error =
+                                Some(format!("Failed to write profile: {}", e));
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        self.game_wizard.error =
+                            Some(format!("Failed to serialize profile: {}", e));
+                        return;
+                    }
+                }
+
+                self.discover_system_and_profiles();
+                if let Some(pos) = self.game_catalog.iter().position(|g| g.game_id == slug) {
+                    self.new_profile_game_idx = pos;
+                }
+                self.show_game_wizard = false;
+                self.set_status(
+                    StatusLevel::Success,
+                    format!(
+                        "Created game profile '{}' ({})",
+                        name,
+                        target_file.display()
+                    ),
+                );
+            }
+            Action::OpenSteamImporter => {
+                let steam_provider = self.config.provider("steam");
+                let steam_roots =
+                    peri_vfs::SteamDiscovery::known_steam_roots_with_config(&steam_provider);
+                let mut libraries = Vec::new();
+                for r in &steam_roots {
+                    libraries.extend(
+                        peri_vfs::SteamDiscovery::discover_library_folders_with_config(
+                            r,
+                            &steam_provider,
+                        ),
+                    );
+                }
+                self.steam_games = peri_vfs::SteamDiscovery::scan_installed_apps_with_config(
+                    &libraries,
+                    &steam_provider,
+                );
+                self.steam_importer_cursor = 0;
+                self.steam_importer_is_global = true;
+                self.show_steam_importer = true;
+                self.show_game_wizard = false;
+                self.show_help = false;
+                if self.steam_games.is_empty() {
+                    self.set_status(
+                        StatusLevel::Warning,
+                        "No installed Steam applications or content detected in library folders."
+                            .to_string(),
+                    );
+                }
+            }
+            Action::CloseSteamImporter => {
+                self.show_steam_importer = false;
+            }
+            Action::ToggleSteamImporterLocation => {
+                self.steam_importer_is_global = !self.steam_importer_is_global;
+            }
+            Action::ImportSteamGame => {
+                if self.steam_games.is_empty()
+                    || self.steam_importer_cursor >= self.steam_games.len()
+                {
+                    self.show_steam_importer = false;
+                    return;
+                }
+                let game = &self.steam_games[self.steam_importer_cursor];
+                let slug = if !game.installdir.is_empty() {
+                    game.installdir
+                        .to_lowercase()
+                        .chars()
+                        .map(|c| {
+                            if c.is_alphanumeric() || c == '_' || c == '-' {
+                                c
+                            } else {
+                                '_'
+                            }
+                        })
+                        .collect::<String>()
+                } else {
+                    format!("steam_{}", game.app_id)
+                };
+
+                let mappings = self.config.resolve_mappings(Some(game.app_id), Some(&slug));
+
+                let profile = GameProfile {
+                    id: slug.clone(),
+                    name: game.name.clone(),
+                    steam_app_id: Some(game.app_id),
+                    default_executable: game.executable.clone(),
+                    mappings,
+                };
+
+                let target_dir = if self.steam_importer_is_global {
+                    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
+                        PathBuf::from(config_home).join("perihelion/profiles")
+                    } else if let Ok(home) = std::env::var("HOME") {
+                        PathBuf::from(home).join(".config/perihelion/profiles")
+                    } else {
+                        self.set_status(
+                            StatusLevel::Error,
+                            "Cannot resolve user home directory".to_string(),
+                        );
+                        return;
+                    }
+                } else {
+                    self.workspace_root.join(".perihelion/profiles")
+                };
+
+                if let Err(e) = std::fs::create_dir_all(&target_dir) {
+                    self.set_status(
+                        StatusLevel::Error,
+                        format!("Failed to create profile dir: {}", e),
+                    );
+                    return;
+                }
+
+                let target_file = target_dir.join(format!("{}.toml", slug));
+                match profile.to_toml_str() {
+                    Ok(toml_str) => {
+                        if let Err(e) = std::fs::write(&target_file, toml_str) {
+                            self.set_status(
+                                StatusLevel::Error,
+                                format!("Failed to write profile: {}", e),
+                            );
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        self.set_status(
+                            StatusLevel::Error,
+                            format!("Failed to serialize profile: {}", e),
+                        );
+                        return;
+                    }
+                }
+
+                let game_name = game.name.clone();
+                self.discover_system_and_profiles();
+                if let Some(pos) = self.game_catalog.iter().position(|g| g.game_id == slug) {
+                    self.new_profile_game_idx = pos;
+                }
+                self.show_steam_importer = false;
+                self.set_status(
+                    StatusLevel::Success,
+                    format!(
+                        "Imported Steam profile for '{}' ({})",
+                        game_name,
+                        target_file.display()
+                    ),
+                );
+            }
+            Action::DeleteSelectedProfile => {
+                if !self.profiles.is_empty() && self.profile_cursor < self.profiles.len() {
+                    let removed = self.profiles.remove(self.profile_cursor);
+                    if self.profile_cursor >= self.profiles.len() && !self.profiles.is_empty() {
+                        self.profile_cursor = self.profiles.len() - 1;
+                    }
+                    self.set_status(
+                        StatusLevel::Warning,
+                        format!("Removed workspace profile '{}'", removed.name),
+                    );
+                }
             }
             Action::Tick => {
                 while let Ok(msg) = self.download_rx.0.try_recv() {
@@ -3054,6 +3493,9 @@ mod tests {
         let app = App::new();
         assert_eq!(app.active_tab, Tab::Overview);
         assert_eq!(app.overview_focus, OverviewFocus::CommandInput);
+        assert_eq!(app.game_title, "No Active Workspace");
+        assert!(app.profiles.is_empty());
+        assert!(app.mods.is_empty());
         assert!(!app.game_catalog.is_empty());
         assert_eq!(app.game_catalog[0].short_name, "Generic / Custom Game");
         assert!(app.show_inspector);
@@ -3482,5 +3924,111 @@ mod tests {
         assert_eq!(app.status_level, StatusLevel::Success);
         assert!(!app.overview_input_active);
         assert_eq!(app.overview_input, "");
+    }
+
+    #[test]
+    fn test_game_wizard_lifecycle() {
+        let cur = std::env::current_dir().unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix(".tmp_helion_wiz_")
+            .tempdir_in(&cur)
+            .unwrap();
+
+        let mut app = App::with_workspace(tmp.path());
+        assert!(!app.show_game_wizard);
+
+        // Open wizard
+        app.handle_action(Action::OpenGameWizard);
+        assert!(app.show_game_wizard);
+        assert_eq!(app.game_wizard.active_field, GameWizardField::GameId);
+
+        // Fill in fields
+        app.game_wizard.game_id = "hollow_knight".to_string();
+        app.game_wizard.name = "Hollow Knight".to_string();
+        app.game_wizard.steam_app_id = "367520".to_string();
+        app.game_wizard.executable = "hollow_knight.x86_64".to_string();
+        app.game_wizard.mappings = "hollow_knight_Data=Data".to_string();
+        app.game_wizard.is_global = false;
+
+        // Save
+        app.handle_action(Action::SaveGameWizard);
+        assert!(!app.show_game_wizard);
+        assert!(app.game_wizard.error.is_none());
+        assert_eq!(app.status_level, StatusLevel::Success);
+
+        // Check catalog contains new game
+        let found = app
+            .game_catalog
+            .iter()
+            .find(|g| g.game_id == "hollow_knight");
+        assert!(found.is_some());
+        let game = found.unwrap();
+        assert_eq!(game.full_name, "Hollow Knight");
+        assert_eq!(game.steam_app_id, 367520);
+        assert_eq!(game.mappings.len(), 1);
+    }
+
+    #[test]
+    fn test_steam_importer_lifecycle() {
+        let cur = std::env::current_dir().unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix(".tmp_helion_stm_")
+            .tempdir_in(&cur)
+            .unwrap();
+
+        let mut app = App::with_workspace(tmp.path());
+        assert!(!app.show_steam_importer);
+
+        app.handle_action(Action::OpenSteamImporter);
+        assert!(app.show_steam_importer);
+
+        // Mock a discovered steam game with LUT mapping registration
+        app.config.mappings.register_target(
+            "1086940",
+            vec![peri_core::LayoutMapping::new("Mods", "Data/Mods")],
+        );
+
+        app.steam_games = vec![peri_vfs::DiscoveredSteamApp {
+            app_id: 1086940,
+            name: "Baldur's Gate 3".to_string(),
+            installdir: "Baldurs Gate 3".to_string(),
+            install_path: std::path::PathBuf::from("/mock/bg3"),
+            executable: Some("bin/bg3.exe".to_string()),
+            detected_engine: None,
+        }];
+        app.steam_importer_cursor = 0;
+        app.steam_importer_is_global = false;
+
+        // Import
+        app.handle_action(Action::ImportSteamGame);
+        assert!(!app.show_steam_importer);
+        assert_eq!(app.status_level, StatusLevel::Success);
+
+        // Catalog should contain imported game
+        let found = app
+            .game_catalog
+            .iter()
+            .find(|g| g.game_id == "baldurs_gate_3");
+        assert!(found.is_some());
+        let game = found.unwrap();
+        assert_eq!(game.full_name, "Baldur's Gate 3");
+        assert_eq!(game.steam_app_id, 1086940);
+        assert_eq!(game.executable, "bin/bg3.exe");
+        assert_eq!(game.mappings.len(), 1);
+        assert_eq!(game.mappings[0].from_prefix, "Mods");
+        assert_eq!(game.mappings[0].to_prefix, "Data/Mods");
+    }
+
+    #[test]
+    fn test_delete_selected_profile() {
+        let mut app = App::new();
+        app.populate_test_fixture();
+        let initial_count = app.profiles.len();
+        assert!(initial_count > 0);
+
+        app.profile_cursor = 0;
+        app.handle_action(Action::DeleteSelectedProfile);
+        assert_eq!(app.profiles.len(), initial_count - 1);
+        assert_eq!(app.status_level, StatusLevel::Warning);
     }
 }

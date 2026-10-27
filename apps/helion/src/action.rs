@@ -171,6 +171,21 @@ pub enum Action {
     CloseModal,
 
     // ----------------------------------------------------
+    // Profile Management & Wizard Modals
+    // ----------------------------------------------------
+    OpenGameWizard,
+    CloseGameWizard,
+    OpenSteamImporter,
+    CloseSteamImporter,
+    SaveGameWizard,
+    ImportSteamGame,
+    ToggleWizardLocation,
+    ToggleSteamImporterLocation,
+    DeleteSelectedProfile,
+    CycleWizardField,
+    CycleWizardFieldReverse,
+
+    // ----------------------------------------------------
     // Transactional Draft Lifecycle
     // ----------------------------------------------------
     StageToggle {

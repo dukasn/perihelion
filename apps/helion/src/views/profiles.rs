@@ -18,13 +18,13 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap},
     Frame,
 };
 
 use crate::{
     action::{InputValidation, ProfilesFocus},
-    app::App,
+    app::{App, GameWizardField},
     theme::{
         box_title_label, card_block, input_block, panel_block, style_block_right_label,
         style_ghost_text, style_placeholder, style_selected_row, style_selected_row_secondary,
@@ -62,7 +62,11 @@ fn render_profiles_list_pane(f: &mut Frame, app: &App, area: Rect) {
         .title(
             Line::from(vec![
                 Span::styled(
-                    format!(" {} Profiles ", app.profiles.len()),
+                    "[g] Define Game  [s] Scan Steam  | ",
+                    Style::default().fg(COLOR_TEXT_MUTED),
+                ),
+                Span::styled(
+                    format!("{} Profiles ", app.profiles.len()),
                     style_block_right_label(list_focused),
                 ),
                 Span::raw(" "),
@@ -258,31 +262,77 @@ fn render_profiles_list_pane(f: &mut Frame, app: &App, area: Rect) {
         let empty_p = Paragraph::new(vec![
             Line::from(""),
             Line::from(vec![Span::styled(
-                "No game profiles configured yet.",
+                "No workspace profiles created yet.",
                 Style::default()
                     .fg(COLOR_TEXT_PRIMARY)
                     .add_modifier(Modifier::BOLD),
             )]),
             Line::from(""),
             Line::from(vec![
+                Span::styled("1. Target Game:  ", Style::default().fg(COLOR_TEXT_MUTED)),
+                Span::styled("Use ", Style::default().fg(COLOR_TEXT_SECONDARY)),
                 Span::styled(
-                    "Type a profile name above, select target game with ",
-                    Style::default().fg(COLOR_TEXT_SECONDARY),
+                    "[t]",
+                    Style::default()
+                        .fg(COLOR_FOCUS)
+                        .add_modifier(Modifier::BOLD),
                 ),
+                Span::styled(" or ", Style::default().fg(COLOR_TEXT_SECONDARY)),
                 Span::styled(
                     "[< / >]",
                     Style::default()
                         .fg(COLOR_FOCUS)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(", and press ", Style::default().fg(COLOR_TEXT_SECONDARY)),
+                Span::styled(
+                    " to select target game above.",
+                    Style::default().fg(COLOR_TEXT_SECONDARY),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("2. Steam Import: ", Style::default().fg(COLOR_TEXT_MUTED)),
+                Span::styled("Press ", Style::default().fg(COLOR_TEXT_SECONDARY)),
+                Span::styled(
+                    "[s]",
+                    Style::default()
+                        .fg(COLOR_FOCUS)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    " to auto-detect and import installed Steam apps.",
+                    Style::default().fg(COLOR_TEXT_SECONDARY),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("3. Custom Game:  ", Style::default().fg(COLOR_TEXT_MUTED)),
+                Span::styled("Press ", Style::default().fg(COLOR_TEXT_SECONDARY)),
+                Span::styled(
+                    "[g]",
+                    Style::default()
+                        .fg(COLOR_FOCUS)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    " to define a new game profile from scratch.",
+                    Style::default().fg(COLOR_TEXT_SECONDARY),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("4. New Profile:  ", Style::default().fg(COLOR_TEXT_MUTED)),
+                Span::styled(
+                    "Type a name above and press ",
+                    Style::default().fg(COLOR_TEXT_SECONDARY),
+                ),
                 Span::styled(
                     "[Enter]",
                     Style::default()
                         .fg(COLOR_FOCUS)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" to create one.", Style::default().fg(COLOR_TEXT_SECONDARY)),
+                Span::styled(
+                    " to create a workspace profile.",
+                    Style::default().fg(COLOR_TEXT_SECONDARY),
+                ),
             ]),
         ])
         .wrap(Wrap { trim: false });
@@ -610,18 +660,190 @@ fn render_profile_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
 
         let p = Paragraph::new(lines).wrap(Wrap { trim: false });
         f.render_widget(p, inner);
+    } else if let Some(target_game) = app.selected_target_game() {
+        let rule_str = "─".repeat(inner.width as usize);
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled(
+                    &target_game.short_name,
+                    Style::default()
+                        .fg(COLOR_TEXT_PRIMARY)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    "[Target Specification]",
+                    Style::default()
+                        .fg(COLOR_FOCUS)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(
+                    &target_game.game_id,
+                    Style::default().fg(COLOR_TEXT_SECONDARY),
+                ),
+                Span::styled("  |  ", Style::default().fg(COLOR_BORDER_NORMAL)),
+                Span::styled(
+                    if target_game.steam_app_id > 0 {
+                        format!("Steam AppID {}", target_game.steam_app_id)
+                    } else {
+                        "Native / Custom Game".to_string()
+                    },
+                    Style::default().fg(COLOR_TEXT_MUTED),
+                ),
+                Span::styled("  |  ", Style::default().fg(COLOR_BORDER_NORMAL)),
+                Span::styled(
+                    &target_game.default_proton,
+                    Style::default().fg(COLOR_TEXT_MUTED),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                rule_str.clone(),
+                Style::default().fg(COLOR_SEPARATOR),
+            )),
+            Line::from(Span::styled(
+                "GAME TARGET & SANDBOX PATHS",
+                Style::default()
+                    .fg(COLOR_TEXT_MUTED)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Game Title   ", Style::default().fg(COLOR_TEXT_MUTED)),
+                Span::styled(
+                    &target_game.full_name,
+                    Style::default()
+                        .fg(COLOR_TEXT_PRIMARY)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Entry Binary ", Style::default().fg(COLOR_TEXT_MUTED)),
+                Span::styled(
+                    &target_game.executable,
+                    Style::default()
+                        .fg(COLOR_TEXT_PRIMARY)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Base Game RO ", Style::default().fg(COLOR_TEXT_MUTED)),
+                Span::styled(
+                    &target_game.install_dir,
+                    Style::default().fg(COLOR_TEXT_SECONDARY),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Isolation    ", Style::default().fg(COLOR_TEXT_MUTED)),
+                Span::styled(
+                    "CLONE_NEWNS | CLONE_NEWUSER (Immutable RO Base)",
+                    Style::default().fg(COLOR_TEXT_SECONDARY),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                rule_str.clone(),
+                Style::default().fg(COLOR_SEPARATOR),
+            )),
+            Line::from(Span::styled(
+                format!(
+                    "VFS LAYOUT PREFIX MAPPINGS ({} RULES)",
+                    target_game.mappings.len()
+                ),
+                Style::default()
+                    .fg(COLOR_TEXT_MUTED)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+        ];
+
+        if target_game.mappings.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  Direct 1:1 overlay without path prefix translation.",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            )));
+        } else {
+            let total_maps = target_game.mappings.len();
+            for (idx, m) in target_game.mappings.iter().enumerate() {
+                let connector = if idx + 1 == total_maps {
+                    "╰─ "
+                } else {
+                    "├─ "
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(connector, Style::default().fg(COLOR_TEXT_MUTED)),
+                    Span::styled(
+                        format!("{:<8}", format!("{}/*", m.from_prefix)),
+                        Style::default()
+                            .fg(COLOR_TEXT_PRIMARY)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" --> ", Style::default().fg(COLOR_TEXT_MUTED)),
+                    Span::styled(
+                        format!("{}/*", m.to_prefix),
+                        Style::default().fg(COLOR_TEXT_SECONDARY),
+                    ),
+                ]));
+            }
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            rule_str,
+            Style::default().fg(COLOR_SEPARATOR),
+        )));
+        lines.push(Line::from(Span::styled(
+            "ENVIRONMENT & RUNTIME DIAGNOSTICS",
+            Style::default()
+                .fg(COLOR_TEXT_MUTED)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+
+        let diag = &target_game.default_diagnostic;
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("! {}", diag.level),
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                &diag.title,
+                Style::default()
+                    .fg(COLOR_TEXT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        lines.push(Line::from(Span::styled(
+            &diag.message,
+            Style::default().fg(COLOR_TEXT_SECONDARY),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("Hint: ", Style::default().fg(COLOR_TEXT_MUTED)),
+            Span::styled(
+                "Press [n] above to create a workspace profile for this game target.",
+                Style::default().fg(COLOR_FOCUS),
+            ),
+        ]));
+
+        let p = Paragraph::new(lines).wrap(Wrap { trim: false });
+        f.render_widget(p, inner);
     } else {
         let empty_lines = vec![
             Line::from(""),
             Line::from(vec![Span::styled(
-                "No profile selected",
+                "No profile or target game selected",
                 Style::default()
                     .fg(COLOR_TEXT_PRIMARY)
                     .add_modifier(Modifier::BOLD),
             )]),
             Line::from(""),
             Line::from(vec![Span::styled(
-                "Select or create a game profile to inspect environment layout and runtime diagnostics.",
+                "Select a target game or press [s] to scan Steam / [g] to define a new game profile.",
                 Style::default().fg(COLOR_TEXT_SECONDARY),
             )]),
         ];
@@ -630,4 +852,545 @@ fn render_profile_inspector_pane(f: &mut Frame, app: &App, area: Rect) {
             inner,
         );
     }
+}
+
+pub fn render_steam_importer_modal(f: &mut Frame, app: &App, area: Rect) {
+    let popup_area = centered_rect(76, 75, area);
+    f.render_widget(Clear, popup_area);
+
+    let loc_text = if app.steam_importer_is_global {
+        " Target: [*] Global (~/.config) [Tab/Space to toggle] "
+    } else {
+        " Target: [*] Workspace (.perihelion) [Tab/Space to toggle] "
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(
+            Style::default()
+                .fg(COLOR_BORDER_FOCUSED)
+                .add_modifier(Modifier::BOLD),
+        )
+        .title(
+            Line::from(Span::styled(
+                " Scan & Import Steam Apps [s] ",
+                Style::default()
+                    .fg(COLOR_TEXT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .alignment(Alignment::Left),
+        )
+        .title(
+            Line::from(Span::styled(
+                loc_text,
+                Style::default()
+                    .fg(COLOR_FOCUS)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .alignment(Alignment::Right),
+        )
+        .padding(Padding::new(2, 2, 1, 1));
+
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let rule_str = "─".repeat(inner.width as usize);
+
+    if app.steam_games.is_empty() {
+        let empty_lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "No installed Steam apps or content detected across configured library folders.",
+                Style::default()
+                    .fg(COLOR_AMBER)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Perihelion probed default Linux Steam roots (~/.local/share/Steam, Flatpak, $STEAM_DIR).",
+                Style::default().fg(COLOR_TEXT_SECONDARY),
+            )),
+            Line::from(Span::styled(
+                "Make sure Steam is running or apps are installed, or press [g] to define a custom game manually.",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(rule_str, Style::default().fg(COLOR_SEPARATOR))),
+            Line::from(Span::styled(
+                "[Esc] Close Dialog    [g] Define Game Profile Manually",
+                Style::default().fg(COLOR_FOCUS),
+            )),
+        ];
+        f.render_widget(
+            Paragraph::new(empty_lines).wrap(Wrap { trim: false }),
+            inner,
+        );
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2), // Top description
+            Constraint::Length(1), // Separator
+            Constraint::Min(6),    // List of games
+            Constraint::Length(1), // Separator
+            Constraint::Length(2), // Bottom action bar
+        ])
+        .split(inner);
+
+    let desc = Line::from(vec![
+        Span::styled(
+            format!(
+                "Found {} installed Steam app{} / content.",
+                app.steam_games.len(),
+                if app.steam_games.len() == 1 { "" } else { "s" }
+            ),
+            Style::default()
+                .fg(COLOR_TEXT_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            "Select an app or binary entry and press [Enter] to auto-scaffold a declarative profile.",
+            Style::default().fg(COLOR_TEXT_SECONDARY),
+        ),
+    ]);
+    f.render_widget(Paragraph::new(desc), chunks[0]);
+
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            &rule_str,
+            Style::default().fg(COLOR_SEPARATOR),
+        ))),
+        chunks[1],
+    );
+
+    // List of games (scrollable window)
+    let list_area = chunks[2];
+    let row_height = 2; // 2 lines per game
+    let visible_capacity = ((list_area.height as usize) / row_height).max(1);
+
+    let scroll_offset = if app.steam_importer_cursor >= visible_capacity {
+        app.steam_importer_cursor - visible_capacity + 1
+    } else {
+        0
+    };
+
+    let mut game_rows = Vec::new();
+    for (idx, game) in app
+        .steam_games
+        .iter()
+        .enumerate()
+        .skip(scroll_offset)
+        .take(visible_capacity)
+    {
+        let is_selected = idx == app.steam_importer_cursor;
+        let prefix = if is_selected { "> " } else { "  " };
+
+        let exe_str = game
+            .executable
+            .as_deref()
+            .unwrap_or("No entry binary detected");
+
+        if is_selected {
+            game_rows.push(Line::from(vec![
+                Span::styled(prefix, style_selected_row()),
+                Span::styled(&game.name, style_selected_row()),
+                Span::styled("  ", style_selected_row()),
+                Span::styled(
+                    format!("(AppID {})", game.app_id),
+                    style_selected_row_secondary(),
+                ),
+                Span::styled("  ::  ", style_selected_row_secondary()),
+                Span::styled(exe_str, style_selected_row_secondary()),
+            ]));
+            game_rows.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(
+                    format!("Path: {}", game.install_path.display()),
+                    Style::default().fg(COLOR_TEXT_MUTED),
+                ),
+            ]));
+        } else {
+            game_rows.push(Line::from(vec![
+                Span::raw(prefix),
+                Span::styled(
+                    &game.name,
+                    Style::default()
+                        .fg(COLOR_TEXT_PRIMARY)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    format!("(AppID {})", game.app_id),
+                    Style::default().fg(COLOR_TEXT_MUTED),
+                ),
+                Span::raw("  ::  "),
+                Span::styled(exe_str, Style::default().fg(COLOR_TEXT_SECONDARY)),
+            ]));
+            game_rows.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(
+                    format!("Path: {}", game.install_path.display()),
+                    Style::default().fg(COLOR_TEXT_MUTED),
+                ),
+            ]));
+        }
+    }
+
+    f.render_widget(Paragraph::new(game_rows), list_area);
+
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            &rule_str,
+            Style::default().fg(COLOR_SEPARATOR),
+        ))),
+        chunks[3],
+    );
+
+    let bottom_actions = Line::from(vec![
+        Span::styled(
+            "[Enter]",
+            Style::default()
+                .fg(COLOR_FOCUS)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            " Import Selected App   ",
+            Style::default().fg(COLOR_TEXT_PRIMARY),
+        ),
+        Span::styled(
+            "[Tab/Space]",
+            Style::default()
+                .fg(COLOR_FOCUS)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            " Toggle Target Location   ",
+            Style::default().fg(COLOR_TEXT_PRIMARY),
+        ),
+        Span::styled(
+            "[Up/Down or j/k]",
+            Style::default()
+                .fg(COLOR_FOCUS)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Navigate   ", Style::default().fg(COLOR_TEXT_PRIMARY)),
+        Span::styled(
+            "[Esc/q]",
+            Style::default()
+                .fg(COLOR_FOCUS)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Cancel", Style::default().fg(COLOR_TEXT_PRIMARY)),
+    ]);
+    f.render_widget(Paragraph::new(bottom_actions), chunks[4]);
+}
+
+pub fn render_game_wizard_modal(f: &mut Frame, app: &App, area: Rect) {
+    let popup_area = centered_rect(74, 82, area);
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(
+            Style::default()
+                .fg(COLOR_BORDER_FOCUSED)
+                .add_modifier(Modifier::BOLD),
+        )
+        .title(
+            Line::from(Span::styled(
+                " Define Game Profile Wizard [g] ",
+                Style::default()
+                    .fg(COLOR_TEXT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .alignment(Alignment::Left),
+        )
+        .title(
+            Line::from(Span::styled(
+                " [Ctrl+S / Enter] Save  [Esc] Cancel ",
+                Style::default()
+                    .fg(COLOR_FOCUS)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .alignment(Alignment::Right),
+        )
+        .padding(Padding::new(2, 2, 1, 1));
+
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let rule_str = "─".repeat(inner.width as usize);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2), // Subtitle
+            Constraint::Length(1), // Separator
+            Constraint::Length(3), // Field 1: Game ID
+            Constraint::Length(3), // Field 2: Name
+            Constraint::Length(3), // Field 3: Steam App ID
+            Constraint::Length(3), // Field 4: Executable
+            Constraint::Length(3), // Field 5: Mappings
+            Constraint::Length(3), // Field 6: Target Destination
+            Constraint::Length(2), // Error or status hint
+            Constraint::Length(1), // Separator
+            Constraint::Length(1), // Footer hint
+        ])
+        .split(inner);
+
+    let subtitle = Line::from(Span::styled(
+        "Define declarative profile rules for a native Linux or Wine/Proton game title.",
+        Style::default().fg(COLOR_TEXT_SECONDARY),
+    ));
+    f.render_widget(Paragraph::new(subtitle), chunks[0]);
+
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            &rule_str,
+            Style::default().fg(COLOR_SEPARATOR),
+        ))),
+        chunks[1],
+    );
+
+    let render_field =
+        |f: &mut Frame, area: Rect, title: &str, val: &str, is_active: bool, placeholder: &str| {
+            let border_col = if is_active {
+                COLOR_BORDER_FOCUSED
+            } else {
+                COLOR_BORDER_NORMAL
+            };
+            let b = card_block(border_col)
+                .title(Line::from(box_title_label(title, is_active)).alignment(Alignment::Left));
+            let inner_b = b.inner(area);
+            f.render_widget(b, area);
+
+            let line = if val.is_empty() {
+                if is_active {
+                    Line::from(vec![
+                        Span::styled("> ", Style::default().fg(COLOR_FOCUS)),
+                        Span::styled("█", Style::default().fg(COLOR_FOCUS)),
+                        Span::styled(placeholder, style_placeholder()),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::styled("> ", Style::default().fg(COLOR_TEXT_MUTED)),
+                        Span::styled(placeholder, style_placeholder()),
+                    ])
+                }
+            } else {
+                let mut spans = vec![
+                    Span::styled(
+                        "> ",
+                        Style::default().fg(if is_active {
+                            COLOR_FOCUS
+                        } else {
+                            COLOR_TEXT_MUTED
+                        }),
+                    ),
+                    Span::styled(
+                        val,
+                        Style::default()
+                            .fg(COLOR_TEXT_PRIMARY)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ];
+                if is_active {
+                    spans.push(Span::styled("█", Style::default().fg(COLOR_FOCUS)));
+                }
+                Line::from(spans)
+            };
+            f.render_widget(Paragraph::new(line), inner_b);
+        };
+
+    // 1. Game ID
+    render_field(
+        f,
+        chunks[2],
+        "Game Identifier (slug, e.g. witcher3)",
+        &app.game_wizard.game_id,
+        app.game_wizard.active_field == GameWizardField::GameId,
+        "Enter slugified game ID (required)...",
+    );
+
+    // 2. Name
+    render_field(
+        f,
+        chunks[3],
+        "Display Title (e.g. The Witcher 3: Wild Hunt)",
+        &app.game_wizard.name,
+        app.game_wizard.active_field == GameWizardField::Name,
+        "Enter full human-readable game title...",
+    );
+
+    // 3. Steam App ID
+    render_field(
+        f,
+        chunks[4],
+        "Steam App ID (optional, e.g. 292030)",
+        &app.game_wizard.steam_app_id,
+        app.game_wizard.active_field == GameWizardField::SteamAppId,
+        "Enter numerical Steam App ID or leave empty for native...",
+    );
+
+    // 4. Executable
+    render_field(
+        f,
+        chunks[5],
+        "Default Executable (e.g. bin/x64/witcher3.exe)",
+        &app.game_wizard.executable,
+        app.game_wizard.active_field == GameWizardField::Executable,
+        "Enter binary name or relative path...",
+    );
+
+    // 5. Mappings
+    render_field(
+        f,
+        chunks[6],
+        "VFS Prefix Mappings (e.g. mods=mods, bin=bin)",
+        &app.game_wizard.mappings,
+        app.game_wizard.active_field == GameWizardField::Mappings,
+        "Comma-separated prefix translations (leave empty for 1:1)...",
+    );
+
+    // 6. Target Destination
+    let is_global_active = app.game_wizard.active_field == GameWizardField::IsGlobal;
+    let dest_block = card_block(if is_global_active {
+        COLOR_BORDER_FOCUSED
+    } else {
+        COLOR_BORDER_NORMAL
+    })
+    .title(
+        Line::from(box_title_label(
+            "Save Target Storage [Space / Left / Right]",
+            is_global_active,
+        ))
+        .alignment(Alignment::Left),
+    );
+    let dest_inner = dest_block.inner(chunks[7]);
+    f.render_widget(dest_block, chunks[7]);
+
+    let dest_spans = if app.game_wizard.is_global {
+        vec![
+            Span::styled(
+                " [*] Global Config ",
+                Style::default()
+                    .fg(COLOR_FOCUS)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "(~/.config/perihelion/profiles)  ",
+                Style::default().fg(COLOR_TEXT_PRIMARY),
+            ),
+            Span::styled(" [ ] Workspace ", Style::default().fg(COLOR_TEXT_MUTED)),
+            Span::styled(
+                "(.perihelion/profiles)",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
+        ]
+    } else {
+        vec![
+            Span::styled(" [ ] Global Config ", Style::default().fg(COLOR_TEXT_MUTED)),
+            Span::styled(
+                "(~/.config/perihelion/profiles)  ",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
+            Span::styled(
+                " [*] Workspace ",
+                Style::default()
+                    .fg(COLOR_FOCUS)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "(.perihelion/profiles)",
+                Style::default().fg(COLOR_TEXT_PRIMARY),
+            ),
+        ]
+    };
+    f.render_widget(Paragraph::new(Line::from(dest_spans)), dest_inner);
+
+    // Error or status hint
+    if let Some(ref err) = app.game_wizard.error {
+        let err_line = Line::from(vec![
+            Span::styled(
+                "! Error: ",
+                Style::default().fg(COLOR_RED).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(err, Style::default().fg(COLOR_RED)),
+        ]);
+        f.render_widget(Paragraph::new(err_line), chunks[8]);
+    } else {
+        let info_line = Line::from(vec![
+            Span::styled("Tip: ", Style::default().fg(COLOR_TEXT_MUTED)),
+            Span::styled(
+                "Global profiles are available across all workspaces on this system.",
+                Style::default().fg(COLOR_TEXT_SECONDARY),
+            ),
+        ]);
+        f.render_widget(Paragraph::new(info_line), chunks[8]);
+    }
+
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            &rule_str,
+            Style::default().fg(COLOR_SEPARATOR),
+        ))),
+        chunks[9],
+    );
+
+    let footer_hints = Line::from(vec![
+        Span::styled(
+            "[Tab/Down]",
+            Style::default()
+                .fg(COLOR_FOCUS)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Next Field   ", Style::default().fg(COLOR_TEXT_PRIMARY)),
+        Span::styled(
+            "[BackTab/Up]",
+            Style::default()
+                .fg(COLOR_FOCUS)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Prev Field   ", Style::default().fg(COLOR_TEXT_PRIMARY)),
+        Span::styled(
+            "[Ctrl+S]",
+            Style::default()
+                .fg(COLOR_FOCUS)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Save Profile   ", Style::default().fg(COLOR_TEXT_PRIMARY)),
+        Span::styled(
+            "[Esc]",
+            Style::default()
+                .fg(COLOR_FOCUS)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Cancel", Style::default().fg(COLOR_TEXT_PRIMARY)),
+    ]);
+    f.render_widget(Paragraph::new(footer_hints), chunks[10]);
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }

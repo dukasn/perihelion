@@ -26,13 +26,16 @@ use crate::{
     action::{StatusLevel, Tab},
     app::App,
     theme::{
-        COLOR_AMBER, COLOR_BORDER_SUBTLE, COLOR_CYAN, COLOR_GREEN, COLOR_RED, COLOR_TEXT_MUTED,
-        COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
+        COLOR_AMBER, COLOR_BORDER_SUBTLE, COLOR_CYAN, COLOR_FOCUS, COLOR_GREEN, COLOR_RED,
+        COLOR_TEXT_MUTED, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
     },
     views::{
-        conflicts::render_conflicts_view, downloads::render_downloads_view,
-        help::render_help_modal, mods::render_mods_view, overview::render_overview_view,
-        profiles::render_profiles_view,
+        conflicts::render_conflicts_view,
+        downloads::render_downloads_view,
+        help::render_help_modal,
+        mods::render_mods_view,
+        overview::render_overview_view,
+        profiles::{render_game_wizard_modal, render_profiles_view, render_steam_importer_modal},
     },
 };
 
@@ -74,6 +77,10 @@ pub fn render_ui(f: &mut Frame, app: &App) {
 
     if app.show_help {
         render_help_modal(f, size);
+    } else if app.show_steam_importer {
+        render_steam_importer_modal(f, app, size);
+    } else if app.show_game_wizard {
+        render_game_wizard_modal(f, app, size);
     }
 }
 
@@ -290,6 +297,12 @@ fn render_footer(f: &mut Frame, app: &App, sep_area: Rect, footer_area: Rect) {
     };
 
     let mut right_spans = Vec::new();
+    if app.active_tab == Tab::Profiles && footer_area.width >= 100 {
+        right_spans.push(Span::styled(
+            "[g] Define Game  [s] Scan Steam  |  ",
+            Style::default().fg(COLOR_FOCUS),
+        ));
+    }
     if footer_area.width >= 115 {
         right_spans.push(Span::styled(
             format!("Row {}/{}", cursor_pos, cursor_total),
@@ -398,12 +411,12 @@ fn render_footer(f: &mut Frame, app: &App, sep_area: Rect, footer_area: Rect) {
         .constraints([Constraint::Min(10), Constraint::Length(right_width)])
         .split(footer_area);
 
-    let game_label = if let Some(prof) = app.profiles.iter().find(|p| p.is_active) {
+    let game_label = if app.game_title == "No Active Workspace" {
+        "No Active Workspace"
+    } else if let Some(prof) = app.profiles.iter().find(|p| p.is_active) {
         prof.game_short.as_str()
     } else if let Some(bracket_pos) = app.game_title.find(" [") {
         &app.game_title[..bracket_pos]
-    } else if app.game_title == "No Active Workspace" {
-        "No Active Game"
     } else {
         &app.game_title
     };

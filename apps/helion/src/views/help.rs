@@ -120,8 +120,12 @@ pub fn render_help_modal(f: &mut Frame, area: Rect) {
             "Delete previous word / Clear entire input field",
         ),
         shortcut_row(
-            "n / t / f   ",
-            "New Profile input [4] | Cycle Target Game [4] | Fix Check [4]",
+            "g / s       ",
+            "Define Game Profile Wizard [5] | Scan & Import Steam Apps [5]",
+        ),
+        shortcut_row(
+            "n / t / d   ",
+            "New Profile input [5] | Cycle Target Game [5] | Delete Profile [5]",
         ),
         shortcut_row(
             "u           ",

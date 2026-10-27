@@ -27,7 +27,7 @@ use std::panic;
 use std::time::Duration;
 
 use helion::action::{Action, ModsFocus, ProfilesFocus, Tab};
-use helion::app::App;
+use helion::app::{App, GameWizardField};
 use helion::event::{Event, EventHandler};
 use helion::HelionArgs;
 use helion::{ui, worker};
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)
         .map_err(|e| miette::miette!("Failed to initialize terminal: {}", e))?;
 
-    let mut app = App::new();
+    let mut app = App::with_workspace(&args.workspace);
 
     // Apply initial theme if specified via CLI
     if let Some(theme_name) = &args.theme {
@@ -175,6 +175,114 @@ fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') | KeyCode::Enter => {
                 app.handle_action(Action::CloseModal);
             }
+            _ => {}
+        }
+        return;
+    }
+
+    if app.show_steam_importer {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.handle_action(Action::CloseModal);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if app.steam_importer_cursor > 0 {
+                    app.steam_importer_cursor -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !app.steam_games.is_empty()
+                    && app.steam_importer_cursor + 1 < app.steam_games.len()
+                {
+                    app.steam_importer_cursor += 1;
+                }
+            }
+            KeyCode::Tab | KeyCode::Char(' ') => {
+                app.handle_action(Action::ToggleSteamImporterLocation);
+            }
+            KeyCode::Enter => {
+                app.handle_action(Action::ImportSteamGame);
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    if app.show_game_wizard {
+        match key.code {
+            KeyCode::Esc => {
+                app.handle_action(Action::CloseModal);
+            }
+            KeyCode::Tab | KeyCode::Down => {
+                app.handle_action(Action::CycleWizardField);
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                app.handle_action(Action::CycleWizardFieldReverse);
+            }
+            KeyCode::Enter => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    app.handle_action(Action::SaveGameWizard);
+                } else {
+                    match app.game_wizard.active_field {
+                        GameWizardField::IsGlobal => app.handle_action(Action::SaveGameWizard),
+                        _ => app.handle_action(Action::CycleWizardField),
+                    }
+                }
+            }
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.handle_action(Action::SaveGameWizard);
+            }
+            KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
+                if app.game_wizard.active_field == GameWizardField::IsGlobal =>
+            {
+                app.handle_action(Action::ToggleWizardLocation);
+            }
+            KeyCode::Backspace => match app.game_wizard.active_field {
+                GameWizardField::GameId => {
+                    app.game_wizard.game_id.pop();
+                }
+                GameWizardField::Name => {
+                    app.game_wizard.name.pop();
+                }
+                GameWizardField::SteamAppId => {
+                    app.game_wizard.steam_app_id.pop();
+                }
+                GameWizardField::Executable => {
+                    app.game_wizard.executable.pop();
+                }
+                GameWizardField::Mappings => {
+                    app.game_wizard.mappings.pop();
+                }
+                GameWizardField::IsGlobal => {}
+            },
+            KeyCode::Char(c) => match app.game_wizard.active_field {
+                GameWizardField::GameId => {
+                    if c.is_alphanumeric() || c == '_' || c == '-' {
+                        app.game_wizard.game_id.push(c);
+                    }
+                }
+                GameWizardField::Name => {
+                    let prev_auto = auto_slug(&app.game_wizard.name);
+                    let was_auto_synced =
+                        app.game_wizard.game_id.is_empty() || app.game_wizard.game_id == prev_auto;
+                    app.game_wizard.name.push(c);
+                    if was_auto_synced {
+                        app.game_wizard.game_id = auto_slug(&app.game_wizard.name);
+                    }
+                }
+                GameWizardField::SteamAppId => {
+                    if c.is_ascii_digit() {
+                        app.game_wizard.steam_app_id.push(c);
+                    }
+                }
+                GameWizardField::Executable => {
+                    app.game_wizard.executable.push(c);
+                }
+                GameWizardField::Mappings => {
+                    app.game_wizard.mappings.push(c);
+                }
+                GameWizardField::IsGlobal => {}
+            },
             _ => {}
         }
         return;
@@ -317,7 +425,14 @@ fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Down | KeyCode::Char('j') => app.handle_action(Action::CursorDown),
         KeyCode::PageUp => app.handle_action(Action::CursorPageUp),
         KeyCode::PageDown => app.handle_action(Action::CursorPageDown),
-        KeyCode::Home | KeyCode::Char('g') => app.handle_action(Action::CursorHome),
+        KeyCode::Home => app.handle_action(Action::CursorHome),
+        KeyCode::Char('g') => {
+            if app.active_tab == Tab::Profiles {
+                app.handle_action(Action::OpenGameWizard);
+            } else {
+                app.handle_action(Action::CursorHome);
+            }
+        }
         KeyCode::End | KeyCode::Char('G') => app.handle_action(Action::CursorEnd),
 
         // Reorder Mod Load Order with Shift+K / Shift+J
@@ -404,6 +519,8 @@ fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) {
             if app.active_tab == Tab::Overview {
                 app.handle_action(Action::SetTab(Tab::Mods));
                 app.handle_action(Action::StartSearch);
+            } else if app.active_tab == Tab::Profiles {
+                app.handle_action(Action::OpenSteamImporter);
             }
         }
         KeyCode::Char('t') => {
@@ -446,6 +563,11 @@ fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('f') | KeyCode::Char('x') => {
             if app.active_tab == Tab::Profiles {
                 app.handle_action(Action::FixDiagnostic);
+            }
+        }
+        KeyCode::Delete | KeyCode::Char('d') => {
+            if app.active_tab == Tab::Profiles && app.profiles_focus == ProfilesFocus::ProfileList {
+                app.handle_action(Action::DeleteSelectedProfile);
             }
         }
 
@@ -499,4 +621,21 @@ fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) {
 
         _ => {}
     }
+}
+
+fn auto_slug(name: &str) -> String {
+    name.to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .split('_')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
 }
