@@ -224,9 +224,20 @@ mod tests {
         fs::create_dir_all(root.join("r6/config")).unwrap();
         fs::write(root.join("bin/x64/Cyberpunk2077.exe"), b"").unwrap();
 
-        let cfg = peri_core::GlobalConfig::default();
-        let detected =
-            detect_engine_layout(root, cfg.signatures()).expect("should detect redengine");
+        let mut signatures = peri_core::SignatureRegistry::new();
+        signatures.register(peri_core::EngineSignature {
+            id: "redengine_4".to_string(),
+            name: "REDengine 4".to_string(),
+            priority: 150,
+            anchors: vec!["bin/x64".to_string()],
+            markers: vec!["r6/config".to_string()],
+            binary_subdirs: vec!["bin/x64".to_string()],
+            binary_extensions: vec!["exe".to_string()],
+            environment: vec![],
+            mappings: vec![],
+            content_extensions: vec![],
+        });
+        let detected = detect_engine_layout(root, &signatures).expect("should detect redengine");
 
         assert_eq!(detected.id, "redengine_4");
 

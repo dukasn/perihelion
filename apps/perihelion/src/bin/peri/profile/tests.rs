@@ -52,7 +52,12 @@ fn test_find_executable_candidate() {
     fs::create_dir_all(game_dir.join("bin/x64")).unwrap();
     fs::write(game_dir.join("bin/x64/game.exe"), b"").unwrap();
 
-    let candidate = SteamDiscovery::find_executable_candidate(game_dir);
+    let config = peri_core::ProviderConfig {
+        binary_subdirs: vec!["bin/x64".to_string()],
+        binary_extensions: vec!["exe".to_string()],
+        ..Default::default()
+    };
+    let candidate = SteamDiscovery::find_executable_candidate_with_config(game_dir, &config);
     assert_eq!(candidate, Some("bin/x64/game.exe".to_string()));
 }
 
@@ -111,6 +116,24 @@ async fn test_handle_new_auto_detects_engine_layout() {
     fs::create_dir_all(mock_game.join("Data")).unwrap();
     fs::write(mock_game.join("Data/Starfield.esm"), b"").unwrap();
     fs::write(mock_game.join("Starfield.exe"), b"").unwrap();
+
+    // Supply engine signature recipe via workspace tier
+    let sigs_dir = ws.join(".perihelion/signatures");
+    fs::create_dir_all(&sigs_dir).unwrap();
+    let sig_toml = r#"
+id = "bethesda_creation"
+name = "Bethesda Creation Engine"
+priority = 100
+anchors = ["Data"]
+markers = ["Data/*.esm", "Data/*.esp", "*_loader.exe"]
+binary_subdirs = [".", "bin"]
+binary_extensions = ["exe"]
+mappings = [
+    { from = "Data", to = "Data" },
+    { from = "SKSE", to = "Data/SKSE" },
+]
+"#;
+    fs::write(sigs_dir.join("bethesda_creation.toml"), sig_toml).unwrap();
 
     let args = ProfileNewArgs {
         game_id: "starfield".to_string(),

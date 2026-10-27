@@ -282,60 +282,156 @@ pub struct App {
     pub config: peri_core::GlobalConfig,
 }
 
+fn load_signatures_from_dir(dir: &Path, registry: &mut peri_core::SignatureRegistry) {
+    if !dir.exists() {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    #[derive(serde::Deserialize)]
+                    struct SigDoc {
+                        #[serde(default)]
+                        signatures: Vec<peri_core::EngineSignature>,
+                    }
+                    if let Ok(doc) = toml::from_str::<SigDoc>(&content) {
+                        if !doc.signatures.is_empty() {
+                            for sig in doc.signatures {
+                                registry.register(sig);
+                            }
+                            continue;
+                        }
+                    }
+                    if let Ok(sig) = toml::from_str::<peri_core::EngineSignature>(&content) {
+                        registry.register(sig);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn load_providers_from_dir(
+    dir: &Path,
+    providers: &mut std::collections::BTreeMap<String, peri_core::ProviderConfig>,
+) {
+    if !dir.exists() {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    #[derive(serde::Deserialize)]
+                    struct ProvDoc {
+                        #[serde(default)]
+                        providers: std::collections::BTreeMap<String, peri_core::ProviderConfig>,
+                    }
+                    if let Ok(doc) = toml::from_str::<ProvDoc>(&content) {
+                        if !doc.providers.is_empty() {
+                            for (k, v) in doc.providers {
+                                providers.insert(k, v);
+                            }
+                            continue;
+                        }
+                    }
+                    if let Ok(provider) = toml::from_str::<peri_core::ProviderConfig>(&content) {
+                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                            providers.insert(stem.to_string(), provider);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn load_app_config(workspace_root: &Path) -> peri_core::GlobalConfig {
     // 1. Check workspace configuration
     let ws_config = workspace_root
         .join(".perihelion")
         .join(peri_core::CONFIG_FILENAME);
-    if ws_config.exists() {
+    let mut cfg = if ws_config.exists() {
         if let Ok(content) = std::fs::read_to_string(&ws_config) {
-            if let Ok(cfg) = peri_core::GlobalConfig::from_toml_str(&content) {
-                return cfg;
-            }
+            peri_core::GlobalConfig::from_toml_str(&content).unwrap_or_default()
+        } else {
+            peri_core::GlobalConfig::default()
         }
-    }
-
-    // 2. Check XDG_CONFIG_HOME
-    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
+    } else if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
         let user_config = PathBuf::from(config_home)
             .join("perihelion")
             .join(peri_core::CONFIG_FILENAME);
         if user_config.exists() {
             if let Ok(content) = std::fs::read_to_string(&user_config) {
-                if let Ok(cfg) = peri_core::GlobalConfig::from_toml_str(&content) {
-                    return cfg;
-                }
+                peri_core::GlobalConfig::from_toml_str(&content).unwrap_or_default()
+            } else {
+                peri_core::GlobalConfig::default()
             }
+        } else {
+            peri_core::GlobalConfig::default()
         }
-    }
-
-    // 3. Check ProjectDirs
-    if let Some(proj_dirs) = directories::ProjectDirs::from("com", "perihelion", "perihelion") {
+    } else if let Some(proj_dirs) =
+        directories::ProjectDirs::from("com", "perihelion", "perihelion")
+    {
         let config_file = proj_dirs.config_dir().join(peri_core::CONFIG_FILENAME);
         if config_file.exists() {
             if let Ok(content) = std::fs::read_to_string(&config_file) {
-                if let Ok(cfg) = peri_core::GlobalConfig::from_toml_str(&content) {
-                    return cfg;
-                }
+                peri_core::GlobalConfig::from_toml_str(&content).unwrap_or_default()
+            } else {
+                peri_core::GlobalConfig::default()
             }
+        } else {
+            peri_core::GlobalConfig::default()
         }
-    }
-
-    // 4. Check ~/.config/perihelion/config.toml
-    if let Ok(home) = std::env::var("HOME") {
+    } else if let Ok(home) = std::env::var("HOME") {
         let config_file = PathBuf::from(home)
             .join(".config/perihelion")
             .join(peri_core::CONFIG_FILENAME);
         if config_file.exists() {
             if let Ok(content) = std::fs::read_to_string(&config_file) {
-                if let Ok(cfg) = peri_core::GlobalConfig::from_toml_str(&content) {
-                    return cfg;
-                }
+                peri_core::GlobalConfig::from_toml_str(&content).unwrap_or_default()
+            } else {
+                peri_core::GlobalConfig::default()
             }
+        } else {
+            peri_core::GlobalConfig::default()
         }
-    }
+    } else {
+        peri_core::GlobalConfig::default()
+    };
 
-    peri_core::GlobalConfig::default()
+    // Load cascading signatures
+    let config_dir = if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".config/perihelion")
+    } else {
+        PathBuf::from(".config/perihelion")
+    };
+
+    load_signatures_from_dir(
+        Path::new("/usr/share/perihelion/signatures"),
+        &mut cfg.signatures,
+    );
+    load_signatures_from_dir(&config_dir.join("signatures"), &mut cfg.signatures);
+    load_signatures_from_dir(
+        &workspace_root.join(".perihelion/signatures"),
+        &mut cfg.signatures,
+    );
+
+    // Load cascading providers
+    load_providers_from_dir(
+        Path::new("/usr/share/perihelion/providers"),
+        &mut cfg.providers,
+    );
+    load_providers_from_dir(&config_dir.join("providers"), &mut cfg.providers);
+    load_providers_from_dir(
+        &workspace_root.join(".perihelion/providers"),
+        &mut cfg.providers,
+    );
+
+    cfg
 }
 
 impl Default for App {

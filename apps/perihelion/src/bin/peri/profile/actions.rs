@@ -38,7 +38,7 @@ pub async fn handle_new(args: ProfileNewArgs) -> Result<(), CliError> {
     let span = info_span!("profile_new", game_id = %args.game_id);
     let _enter = span.enter();
 
-    let config = crate::config::load_global_config();
+    let config = crate::config::load_global_config_with_workspace(Some(&args.workspace));
     let provider = config.provider("steam");
 
     // 1. Steam Detection
@@ -184,7 +184,7 @@ pub async fn handle_list(args: ProfileListArgs) -> Result<(), CliError> {
     let span = info_span!("profile_list", workspace = %workspace.display());
     let _enter = span.enter();
 
-    let config = crate::config::load_global_config();
+    let config = crate::config::load_global_config_with_workspace(Some(&workspace));
     let provider = config.provider("steam");
     let steam_roots = SteamDiscovery::known_steam_roots_with_config(&provider);
     let mut steam_libs = Vec::new();

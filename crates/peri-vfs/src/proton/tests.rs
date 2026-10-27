@@ -101,21 +101,31 @@ fn test_scan_and_find_installed_steam_apps() {
 "#;
     fs::write(steamapps.join("appmanifest_228980.acf"), acf_tool).unwrap();
 
+    let config = peri_core::ProviderConfig {
+        roots: vec![],
+        libraries: vec![],
+        compatibility_dirs: vec![],
+        binary_subdirs: vec!["bin/x64".to_string()],
+        binary_extensions: vec!["exe".to_string()],
+        environment: vec![],
+    };
+
     let libs = vec![tmp.path().to_path_buf()];
-    let scanned = SteamDiscovery::scan_installed_apps(&libs);
+    let scanned = SteamDiscovery::scan_installed_apps_with_config(&libs, &config);
     assert_eq!(scanned.len(), 2);
 
-    let found = SteamDiscovery::find_installed_app(&libs, 292030).expect("should find Witcher 3");
+    let found = SteamDiscovery::find_installed_app_with_config(&libs, 292030, &config)
+        .expect("should find Witcher 3");
     assert_eq!(found.name, "The Witcher 3: Wild Hunt");
     assert_eq!(found.installdir, "Witcher 3");
     assert_eq!(found.executable, Some("bin/x64/witcher3.exe".to_string()));
 
-    let tool_found =
-        SteamDiscovery::find_installed_app(&libs, 228980).expect("should find Steamworks tool");
+    let tool_found = SteamDiscovery::find_installed_app_with_config(&libs, 228980, &config)
+        .expect("should find Steamworks tool");
     assert_eq!(tool_found.name, "Steamworks Common Redistributables");
     assert_eq!(tool_found.executable, None);
 
-    let missing = SteamDiscovery::find_installed_app(&libs, 999999);
+    let missing = SteamDiscovery::find_installed_app_with_config(&libs, 999999, &config);
     assert!(missing.is_none());
 }
 
