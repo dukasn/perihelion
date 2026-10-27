@@ -122,9 +122,18 @@ Every crate is documented with architecture guides, invariants, and API examples
 
 ---
 
-## Community Game Profiles
+## Declarative Recipes & Community Profiles
 
-Adding support for a new game requires no C++ extensions or engine patches. Game profiles are declarative definitions mapping package file patterns to game engine directories:
+Perihelion compiles as a clean-slate runtime with zero hardcoded game or storefront bias. Pre-built engine signatures (Bethesda Creation, REDengine 4, Unreal Engine, Unity) and platform providers (Steam) live as modular TOML recipes in [`recipes/`](./recipes):
+
+```bash
+# Enable Steam platform provider and Bethesda Creation Engine detection
+mkdir -p ~/.config/perihelion/{providers,signatures}
+cp recipes/providers/steam.toml ~/.config/perihelion/providers/
+cp recipes/signatures/bethesda_creation.toml ~/.config/perihelion/signatures/
+```
+
+Adding custom layout rules or game profiles requires no engine recompilation:
 
 ```toml
 [profile]
@@ -141,10 +150,10 @@ pattern = "*.esm"
 target = "Data"
 ```
 
-When `peri run` constructs the virtual stack, it evaluates these rules to position mods into their correct virtual paths.
+When `peri run` mounts the virtual stack, it evaluates these rules to position mods into their target virtual paths.
 
 > [!TIP]
-> Want to support a new title? Check [`common/peri-core/src/profile.rs`](./common/peri-core/src/profile.rs) to see existing layout patterns or submit a community profile pull request.
+> Want to support a new title or launcher? Check [`recipes/`](./recipes) to see existing patterns or submit a community recipe pull request.
 
 ---
 

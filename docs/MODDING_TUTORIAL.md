@@ -58,15 +58,24 @@ Game engines stash assets wherever their designers chose. Unreal Engine looks un
 
 A **Game Profile** bridges this gap: it translates relative archive paths from mod packages (`from`) into paths the game engine expects (`to`).
 
+Perihelion compiles as a clean-slate runtime with zero hardcoded game or launcher bias. Pre-made recipes live in `recipes/` and activate by copying them into `~/.config/perihelion/` (or your workspace's `.perihelion/` folder):
+
+```bash
+# Enable Steam discovery and Bethesda Creation Engine detection
+mkdir -p ~/.config/perihelion/{providers,signatures}
+cp recipes/providers/steam.toml ~/.config/perihelion/providers/
+cp recipes/signatures/bethesda_creation.toml ~/.config/perihelion/signatures/
+```
+
 #### Option A: Auto-Discovery from Steam
 
-When a game sits in your Steam library, build a profile using its Steam Application ID:
+When a game sits in your Steam library and the Steam provider recipe is active, build a profile using its Steam Application ID:
 
 ```bash
 peri profile new <game_id> --from-steam <STEAM_APP_ID> --global
 ```
 
-Perihelion checks standard Steam roots—native, Flatpak, and Snap alike—then parses directory markers against built-in signatures. It pulls:
+Perihelion checks standard Steam roots—native, Flatpak, and Snap alike—then parses directory markers against active engine signatures. It pulls:
 - The game binary path
 - Steam Application ID (wiring up Proton compatibility)
 - Engine prefix mappings (such as `mods` $\rightarrow$ `archive/pc/mod`)
@@ -79,7 +88,7 @@ For games installed via GOG, Heroic, or standalone installers, point Perihelion 
 peri profile new <game_id> --game-path /path/to/game/root --global
 ```
 
-Perihelion checks root anchors (`*_Data/Managed`, `Binaries/Win64`, `Data/*.esm`). Once it spots a match, it injects the engine's default routing table.
+Perihelion checks root anchors against active signatures (`*_Data/Managed`, `Binaries/Win64`, `Data/*.esm`). Once it spots a match, it injects the engine's routing table.
 
 #### Option C: Manual Profile Creation
 
