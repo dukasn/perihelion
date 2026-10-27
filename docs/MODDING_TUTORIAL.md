@@ -2,15 +2,15 @@
 
 Mod managers historically treat game directories as mutable scratchpads. They extract loose zip files directly over vanilla data, overwrite shared textures, and leave orphaned files behind when uninstalled. One bad overwrite corrupts an entire installation.
 
-Perihelion replaces destructive file mutation with declarative virtualization. Vanilla game files remain strictly read-only. Mods exist as isolated, versioned packages composed on the fly inside Linux kernel OverlayFS mounts and unprivileged user namespaces. You get reproducible setups, instant profile switching, and zero risk to your base game files.
+Perihelion ditches in-place mutation for declarative virtualization. Stock game files stay untouched. Every mod lives in an isolated, versioned layer mounted on the fly through kernel OverlayFS and unprivileged user namespaces. No file collisions reach disk. Profiles swap in seconds.
 
-This guide details the universal modding lifecycle for any game on Linux, followed by a concrete walkthrough using *The Elder Scrolls V: Skyrim Special Edition*.
+Modding on Linux should not require Wine-wrapped Windows utilities or blind faith in uninstall scripts. The core workflow stays identical across any game engine: define layout rules, lock dependencies in code, and run inside an isolated mount.
 
 ---
 
-## 1. Core Architecture & Sandboxing Model
+## 1. Core Architecture & Sandboxing
 
-Every Perihelion workspace mounts an ephemeral virtual filesystem constructed from three discrete layers:
+Every workspace projects a merged virtual filesystem built from three distinct tiers:
 
 ```text
                   ┌────────────────────────────────────────┐
@@ -33,17 +33,17 @@ Every Perihelion workspace mounts an ephemeral virtual filesystem constructed fr
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-The layers stack according to resolved dependency order:
-- **Base Game (Bottom):** Your untouched vanilla installation. It sits at the lowest layer of `lowerdir`.
-- **Mod Layers (Middle):** Extracted `.peca` packages. Higher-priority mods sit to the left in the OverlayFS `lowerdir` string, overriding conflicting files from lower mods without touching them on disk.
-- **Upper Layer (Top):** An isolated read/write directory (`.perihelion/upper/`). Runtime writes—configuration tweaks, generated caches, crash dumps—land here.
-- **Namespace Boundary:** The game process runs inside an unprivileged mount and user namespace. Once the game exits, the virtual stack unmounts cleanly.
+The stack resolves dependency order deterministically:
+- **Base Game (Bottom):** Your untouched vanilla installation. It anchors the lowest position of the `lowerdir` chain.
+- **Mod Layers (Middle):** Extracted `.peca` packages. Higher-priority mods sit leftmost in the OverlayFS `lowerdir` string, shadowing conflicting files from lower layers without altering them on disk.
+- **Upper Layer (Top):** An isolated read/write scratchpad (`.perihelion/upper/`). Runtime mutations—saves, INI edits, crash logs—divert here instead of muddying mod directories.
+- **Namespace Boundary:** The game process executes inside unprivileged mount and user namespaces. When the game shuts down, the virtual stack unmounts cleanly.
 
 ---
 
 ## 2. The Universal Modding Lifecycle
 
-Regardless of game engine or genre, modding any title with Perihelion follows five distinct stages.
+Engines differ. Packaging conventions differ. The management loop stays constant.
 
 ```
 1. Profile Discovery ──▶ 2. Workspace Init ──▶ 3. Mod Packaging ──▶ 4. Graph Solve ──▶ 5. Sandboxed Run
@@ -54,32 +54,32 @@ Regardless of game engine or genre, modding any title with Perihelion follows fi
 
 ### Step 1: Define or Discover the Game Profile
 
-Different game engines expect assets in different folder hierarchies. Unreal Engine packs mods into `Content/Paks/~mods`, REDengine 4 places them in `archive/pc/mod`, and Bethesda titles route files into `Data/`.
+Game engines stash assets wherever their designers chose. Unreal Engine looks under `Content/Paks/~mods`. REDengine 4 scans `archive/pc/mod`. Bethesda Creation titles look inside `Data/`.
 
-A **Game Profile** tells Perihelion how to translate a mod's archive paths into the target engine layout.
+A **Game Profile** bridges this gap: it translates relative archive paths from mod packages (`from`) into paths the game engine expects (`to`).
 
 #### Option A: Auto-Discovery from Steam
 
-If the game exists in your local Steam library, generate a profile using its Steam Application ID:
+When a game sits in your Steam library, build a profile using its Steam Application ID:
 
 ```bash
 peri profile new <game_id> --from-steam <STEAM_APP_ID> --global
 ```
 
-Perihelion scans standard Steam roots (native, Flatpak, Snap), identifies the install directory, inspects the files against known engine signatures, and automatically fills in:
-- Executable binary paths
-- Steam Application ID for Proton compatibility
-- Prefix translation mappings (e.g., `mods` $\rightarrow$ `archive/pc/mod`)
+Perihelion checks standard Steam roots—native, Flatpak, and Snap alike—then parses directory markers against built-in signatures. It pulls:
+- The game binary path
+- Steam Application ID (wiring up Proton compatibility)
+- Engine prefix mappings (such as `mods` $\rightarrow$ `archive/pc/mod`)
 
 #### Option B: Auto-Discovery from a Directory
 
-If the game comes from GOG, Epic Games via Heroic, or a standalone installer, point Perihelion directly to its directory:
+For games installed via GOG, Heroic, or standalone installers, point Perihelion straight at the root directory:
 
 ```bash
 peri profile new <game_id> --game-path /path/to/game/root --global
 ```
 
-Perihelion's heuristic engine detector scans directory anchors and file markers (`*_Data/Managed`, `Binaries/Win64`, `Data/*.esm`) to determine the underlying engine and apply appropriate mappings.
+Perihelion checks root anchors (`*_Data/Managed`, `Binaries/Win64`, `Data/*.esm`). Once it spots a match, it injects the engine's default routing table.
 
 #### Option C: Manual Profile Creation
 
@@ -94,7 +94,7 @@ peri profile new my_game \
   --global
 ```
 
-Inspect the configured profile at any time:
+Inspect the registered profile at any time:
 
 ```bash
 peri profile show <game_id>
@@ -104,7 +104,7 @@ peri profile show <game_id>
 
 ### Step 2: Initialize a Modding Workspace
 
-A workspace is an isolated directory holding your mod list, configuration overrides, and cached layers. It lives entirely separate from your game install.
+Workspaces isolate your modding state. Keep them anywhere—on a separate NVMe drive, inside your home directory, or alongside shared tools. Your stock game directory remains untouched.
 
 ```bash
 mkdir -p ~/Games/Modding/<game_id>
@@ -123,13 +123,13 @@ Link your pristine vanilla game directory as `base_game`:
 ln -s "/path/to/clean/game/installation" base_game
 ```
 
-OverlayFS uses `base_game` as its bottom-most read-only lower layer.
+OverlayFS anchors this link as the bottom-most lowerdir layer.
 
 ---
 
 ### Step 3: Mod Packaging & The `.peca` Standard
 
-Perihelion distributes mods as `.peca` archives. A valid `.peca` file is a multi-threaded Zstandard-compressed tarball (`.tar.zst`) with a valid `peri.toml` manifest situated at its root.
+Perihelion packages mods as `.peca` archives. A valid `.peca` file is a multi-threaded Zstandard-compressed tarball (`.tar.zst`) with a `peri.toml` manifest at its root.
 
 #### Structure of a `.peca` Mod
 
@@ -141,7 +141,7 @@ my-texture-mod/
 └── peri.toml
 ```
 
-The mod's manifest (`my-texture-mod/peri.toml`) declares its identity, target game, and priority:
+The package manifest (`my-texture-mod/peri.toml`) declares identity, target game, and priority:
 
 ```toml
 [package]
@@ -160,19 +160,19 @@ texture_framework = ">=1.0.0"
 
 #### Compiling with `peri package`
 
-Pack the folder into a distributable archive:
+Turn loose assets into a distributable archive:
 
 ```bash
 peri package ./my-texture-mod -o ./dist/high_res_terrain-1.2.0.peca
 ```
 
-Perihelion validates manifest syntax, checks target compatibility, indexes file paths, and compresses the archive using multi-threaded zstd.
+Perihelion validates manifest fields and inspects target game tags. Then it indexes file entries and streams the payload through multi-threaded zstd.
 
 ---
 
 ### Step 4: Caching, Dependencies & Conflict Resolution
 
-Import packages into the workspace cache via local paths, HTTP mirrors, or BitTorrent magnet links:
+Pull packages into local cache from disk paths, direct HTTP mirrors, or BitTorrent swarms:
 
 ```bash
 # Local package
@@ -185,7 +185,7 @@ peri get https://mods.example.com/texture_framework-1.0.0.peca
 peri get "magnet:?xt=urn:btih:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855&dn=texture_framework.peca"
 ```
 
-Declare active mods in your workspace `peri.toml`:
+Declare dependencies in workspace `peri.toml`:
 
 ```toml
 [package]
@@ -212,59 +212,57 @@ after = [
 
 #### The 3-Tier Resolution Waterfall
 
-When multiple mods supply identical relative file paths, Perihelion resolves the collision through a strict three-tier waterfall:
+When two mods supply the same relative file path, Perihelion resolves the collision through a deterministic three-tier waterfall:
 
-1. **Tier 1 (Explicit Edges):** Rules specified in `[load_order]` take immediate precedence. Dependent mods sit higher in the stack.
-2. **Tier 2 (Priority Weights):** If no edge exists, priorities compare: `lowest` < `low` < `default` < `high` < `highest` < `absolute`. The higher priority package wins.
-3. **Tier 3 (Hard Conflicts):** Identical priorities with no explicit edge fail deterministically with `ResolveError::HardConflict`. The build refuses to mount until you specify a rule in `[overrides]`.
+1. **Tier 1 (Explicit Edges):** Rules in `[load_order.after]` dictate order immediately. Dependents sit higher in the VFS stack.
+2. **Tier 2 (Priority Weights):** Without an explicit edge, priority levels break the tie (`lowest` < `low` < `default` < `high` < `highest` < `absolute`). The heavier mod wins and receives a dynamic DAG edge.
+3. **Tier 3 (Hard Conflicts):** Equal priority and no explicit edge? Resolution halts with `ResolveError::HardConflict`. The build refuses to mount until you pick a winner in `[overrides]`.
 
 ---
 
 ### Step 5: Verification and Synchronization
 
-Verify workspace integrity:
+Run a sanity check before mounting:
 
 ```bash
 peri check
 ```
 
-`peri check` scans the dependency graph for cycles, missing packages, and unhandled file collisions.
+This inspects the dependency DAG for cycles, detects missing packages, and flags unresolved file collisions.
 
-Once verified, sync the virtual filesystem:
+Once verified, materialize the layers:
 
 ```bash
 peri sync
 ```
 
-`peri sync`:
-1. Solves the dependency DAG with PubGrub.
-2. Verifies SHA-256 checksums across all cached archives.
-3. Unpacks missing layers into `.perihelion/extracted/`.
-4. Writes a deterministic `peri.lock` file locking down exact versions and topological order.
+PubGrub solves version constraints across the dependency graph. Hashes verify against SHA-256 digests. Missing archives unpack into `.perihelion/extracted/` with zero disk duplication, and `peri.lock` locks the resolved tree into source control.
 
 ---
 
 ### Step 6: Sandboxed Execution
 
-Simulate the mount payload without touching namespaces or processes:
+Dry-run the mount without entering namespaces or spawning processes:
 
 ```bash
 peri run --dry-run
 ```
 
-The output details the exact OverlayFS `lowerdir` ordering, active layers, and Proton/Wine compatibility variables. Notice that higher-priority mods appear on the left of `lowerdir`:
+The output shows the assembled `lowerdir` stack:
 
 ```text
 lowerdir=/path/to/extracted/high_res_terrain:/path/to/extracted/texture_framework:/path/to/base_game
 ```
 
-Launch the game inside the isolated sandbox:
+Notice the ordering: dependents sit leftmost. Linux OverlayFS searches left-to-right, so winning layers shadow whatever sits underneath.
+
+Launch the sandbox:
 
 ```bash
 peri run
 ```
 
-Or pass custom binary targets and command-line arguments:
+Or override binaries and arguments on the fly:
 
 ```bash
 peri run --exec bin/custom_launcher.exe -- --skip-intro +exec autoexec.cfg
@@ -272,14 +270,13 @@ peri run --exec bin/custom_launcher.exe -- --skip-intro +exec autoexec.cfg
 
 ---
 
-## 3. Concrete Example: Modding Skyrim Special Edition
+## 3. Practical Walkthrough: Skyrim Special Edition
 
-To see these principles in action, we walk through modding *The Elder Scrolls V: Skyrim Special Edition* using the Skyrim Script Extender (SKSE64) and SkyUI.
+Skyrim Special Edition highlights the exact headaches Perihelion solves.
 
-### The Skyrim SE Layout Problem
-- Bethesda's Creation Engine expects all game assets (`.esp` plugins, `.bsa` archives, loose scripts, meshes) inside the `Data/` folder.
-- Script extenders require native executable loaders (`skse64_loader.exe`) in the game root, alongside custom DLL plugins and scripts under `Data/SKSE/` and `Data/scripts/`.
-- Traditional mod managers copy files directly into Steam's game folder. Updating or removing mods risks leaving stale scripts behind.
+Bethesda's Creation Engine bundles plugins (`.esp`, `.esm`, `.esl`), asset archives (`.bsa`), and raw meshes into a single `Data/` folder. Script extenders add another wrinkle: loader binaries (`skse64_loader.exe`) live in the game root, while runtime DLL plugins sit under `Data/SKSE/Plugins/`.
+
+Traditional mod managers dump everything straight into Steam's game directory. Overwrite textures in the wrong sequence, and your game crashes on startup. Uninstalling leaves orphaned scripts baked into your save.
 
 ---
 
@@ -454,35 +451,33 @@ after = [
 
 ### Step 5: Sync and Launch via SKSE64
 
-Verify and sync the workspace:
+Sync the workspace and freeze the lockfile:
 
 ```bash
 peri check
 peri sync
 ```
 
-Perihelion extracts `skse64` and `skyui` into `.perihelion/extracted/` and writes `peri.lock`.
-
-Execute the game through the script extender loader:
+Launch through the script extender:
 
 ```bash
 peri run --exec skse64_loader.exe
 ```
 
-Perihelion:
-1. Spawns an unprivileged user namespace.
-2. Composes the OverlayFS stack (`lowerdir=skyui:skse64:base_game`).
-3. Auto-discovers your Steam Proton runner (Proton Experimental or GE-Proton).
-4. Directs `WINEPREFIX` and `STEAM_COMPAT_DATA_PATH` to Skyrim's compatdata folder (`steamapps/compatdata/489830`).
-5. Executes `skse64_loader.exe` inside the isolated mount.
+Under the hood, Perihelion:
+1. Spawns an unprivileged user and mount namespace.
+2. Mounts the OverlayFS stack (`lowerdir=skyui:skse64:base_game`).
+3. Auto-detects your active Proton runner—Proton Experimental, GE-Proton, or a custom build.
+4. Binds `WINEPREFIX` and `STEAM_COMPAT_DATA_PATH` to Skyrim's compatdata folder (`compatdata/489830`).
+5. Launches `skse64_loader.exe` inside the virtualized mount.
 
-The base game directory remains untouched throughout gameplay.
+The stock game folder stays read-only. Not one byte changes on disk.
 
 ---
 
-## 4. Visual Workflow with Helion (TUI Cockpit)
+## 4. Visual Cockpit: Live Curation in Helion
 
-For live curation without editing TOML files by hand, launch `helion` in any workspace:
+Prefer keys over config files? Run `helion` inside the workspace:
 
 ```bash
 helion
@@ -505,7 +500,7 @@ helion
 └───────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Essential Navigation & Shortcuts
+### Essential Keybindings
 - `1` / `2` / `3` / `4`: Switch tabs (**Overview**, **Mods**, **Profiles**, **Swarm**).
 - `j` / `k` or `Up` / `Down`: Move cursor through mod lists or profile entries.
 - `Space`: Toggle a mod active or inactive (stages a transactional draft).
@@ -518,25 +513,27 @@ helion
 
 ---
 
-## 5. Maintenance, State Resets & Sharing
+## 5. Maintenance & Sharing
 
 ### Resetting Runtime State
-Mod mutations, runtime logs, and modified configuration files write into `.perihelion/upper/`. To restore your modded setup to a completely fresh state without reinstalling mods or verifying base game files:
+Runtime writes land in `.perihelion/upper/`. If bad INI tweaks or broken saves poison your session, wipe the scratchpad:
 
 ```bash
 rm -rf .perihelion/upper/* .perihelion/work/*
 ```
 
-### Reproducible Modpack Sharing
-Distribute your complete mod list to another machine or player by sharing two files:
+Your mods remain intact. Stock game files stay clean. The environment resets instantly.
+
+### Sharing Reproducible Modpacks
+Share two files to duplicate an entire setup:
 - `peri.toml`
 - `peri.lock`
 
-The recipient initializes their baseline and runs:
+The recipient links their base game and runs:
 
 ```bash
 peri sync
 peri run
 ```
 
-Perihelion pulls packages, verifies SHA-256 integrity, unpacks virtual layers, and launches with identical load order and zero configuration drift.
+Perihelion fetches archives, checks SHA-256 digests, and mounts layers in identical topological order. Zero drift. No guesswork.
