@@ -29,7 +29,11 @@ peri <COMMAND> [OPTIONS]
 | `package [dir]` | Compiles a mod folder containing a root `peri.toml` into a validated `.peca` archive with multi-threaded Zstandard compression. |
 | `check` | Scans workspace manifests for dependency cycles, missing packages, and unresolved file collisions. |
 | `run` | Mounts the OverlayFS stack inside an unprivileged Linux mount namespace and executes the game binary. |
+| `profile` | Manages declarative game profiles, layout prefix translations, and auto-discovers games from Steam. |
 | `config` | Displays or edits global settings (`~/.config/perihelion/config.toml`). |
+
+> [!TIP]
+> For a hands-on walkthrough using `peri` and `helion` to mod Skyrim Special Edition from scratch, see the **[Skyrim Modding Tutorial](../../docs/TUTORIAL_SKYRIM.md)**.
 
 ### Common Workflows
 

@@ -115,6 +115,11 @@ Every crate is documented with architecture guides, invariants, and API examples
 | **`helion`** | [`apps/helion`](./apps/helion) | Terminal UI engine, actor supervisors, async background pipelines | [README](./apps/helion/README.md) |
 | **`perihelion`** | [`apps/perihelion`](./apps/perihelion) | User-facing binaries: `peri` (CLI), `perid` (Daemon), and `helion` (TUI runner) | [README](./apps/perihelion/README.md) |
 
+### Guides & Tutorials
+
+- **[Skyrim Special Edition Modding Tutorial](./docs/TUTORIAL_SKYRIM.md):** Complete end-to-end guide covering profile discovery, `.peca` packaging, dependency lockfiles, and sandboxed Proton launching.
+- **[Project Distribution & Architecture](./docs/PROJECT_DISTRIBUTION.md):** Dual-engine release pipeline, semantic versioning mechanics, and automated binary distribution.
+
 ---
 
 ## Community Game Profiles
