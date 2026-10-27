@@ -18,6 +18,32 @@ use clap::{Args, Parser, Subcommand, ValueHint};
 use helion::cli_styles;
 use std::path::PathBuf;
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum CliFormat {
+    #[default]
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CiFlags {
+    pub locked: bool,
+    pub offline: bool,
+    pub format: CliFormat,
+}
+
+impl CiFlags {
+    pub fn from_cli(cli: &Cli) -> Self {
+        let locked = cli.locked || cli.frozen;
+        let offline = cli.offline || cli.frozen;
+        Self {
+            locked,
+            offline,
+            format: cli.format,
+        }
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "peri",
@@ -35,6 +61,28 @@ pub struct Cli {
     /// Enable verbose debug and tracing logs
     #[arg(short, long, global = true, help_heading = "Logging")]
     pub verbose: bool,
+
+    /// Disallow lockfile updates; fail if peri.lock is missing or out of sync
+    #[arg(long, global = true, help_heading = "Automation")]
+    pub locked: bool,
+
+    /// Disallow any network requests; rely strictly on local cache
+    #[arg(long, global = true, help_heading = "Automation")]
+    pub offline: bool,
+
+    /// Equivalent to --locked --offline
+    #[arg(long, global = true, help_heading = "Automation")]
+    pub frozen: bool,
+
+    /// Select stdout formatting (text, json)
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value = "text",
+        help_heading = "Automation"
+    )]
+    pub format: CliFormat,
 
     #[command(subcommand)]
     pub command: Commands,

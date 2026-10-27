@@ -19,17 +19,21 @@ use std::path::PathBuf;
 use tracing::info_span;
 
 use peri_core::profile::{GameProfile, LayoutMapping};
+use peri_core::report::ProfileSummaryReport;
 use peri_vfs::{detect_engine_layout, find_executable_for_engine, SteamDiscovery};
 
-use crate::cli::{ProfileAction, ProfileArgs, ProfileListArgs, ProfileNewArgs, ProfileShowArgs};
+use crate::cli::{
+    CiFlags, CliFormat, ProfileAction, ProfileArgs, ProfileListArgs, ProfileNewArgs,
+    ProfileShowArgs,
+};
 use crate::error::CliError;
 use crate::profile::resolution::{find_profile_with_source, scan_all_profiles, ProfileSource};
 use crate::{validate_workspace_path, PROFILES_DIR};
 
-pub async fn handle_profile(args: ProfileArgs) -> Result<(), CliError> {
+pub async fn handle_profile(args: ProfileArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
     match args.action {
         ProfileAction::New(new_args) => handle_new(new_args).await,
-        ProfileAction::List(list_args) => handle_list(list_args).await,
+        ProfileAction::List(list_args) => handle_list(list_args, ci_flags).await,
         ProfileAction::Show(show_args) => handle_show(show_args).await,
     }
 }
@@ -180,7 +184,7 @@ pub async fn handle_new(args: ProfileNewArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-pub async fn handle_list(args: ProfileListArgs) -> Result<(), CliError> {
+pub async fn handle_list(args: ProfileListArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
     let workspace = validate_workspace_path(&args.workspace)?;
     let span = info_span!("profile_list", workspace = %workspace.display());
     let _enter = span.enter();
@@ -196,6 +200,24 @@ pub async fn handle_list(args: ProfileListArgs) -> Result<(), CliError> {
     }
 
     let discovered = scan_all_profiles(&workspace, &steam_libs);
+
+    if ci_flags.format == CliFormat::Json {
+        let reports: Vec<ProfileSummaryReport> = discovered
+            .into_iter()
+            .map(|item| ProfileSummaryReport {
+                id: item.profile.id,
+                name: item.profile.name,
+                steam_app_id: item.profile.steam_app_id,
+                default_executable: item.profile.default_executable,
+                game_path: item.profile.game_path,
+                source_tier: item.source.as_str().to_string(),
+            })
+            .collect();
+        let json_str = serde_json::to_string_pretty(&reports)
+            .map_err(|e| CliError::Workspace(e.to_string()))?;
+        println!("{json_str}");
+        return Ok(());
+    }
 
     println!(
         "{:<18} {:<32} {:<10} {:<24} {:<8} {:<12}",

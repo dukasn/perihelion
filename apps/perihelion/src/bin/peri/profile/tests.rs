@@ -194,3 +194,25 @@ to_prefix = "Data"
     assert_eq!(fallback.id, "non_existent_game");
     assert_eq!(fallback.name, "non_existent_game");
 }
+
+#[tokio::test]
+async fn test_handle_list_json_format() {
+    let cur = std::env::current_dir().unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix(".tmp_peri_test_")
+        .tempdir_in(&cur)
+        .unwrap();
+    let ws = tmp.path();
+
+    let list_args = crate::cli::ProfileListArgs {
+        workspace: ws.to_path_buf(),
+    };
+    let ci_flags = crate::cli::CiFlags {
+        locked: false,
+        offline: false,
+        format: crate::cli::CliFormat::Json,
+    };
+
+    let result = crate::profile::actions::handle_list(list_args, &ci_flags).await;
+    assert!(result.is_ok());
+}

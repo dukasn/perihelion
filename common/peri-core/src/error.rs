@@ -219,3 +219,41 @@ pub enum SecurityError {
     )]
     PathTraversal(PathBuf),
 }
+
+#[derive(Debug, Error, Diagnostic, Clone, PartialEq, Eq)]
+pub enum LockfileError {
+    #[error("Missing lockfile: 'peri.lock' does not exist in workspace")]
+    #[diagnostic(
+        code(peri::lockfile::missing),
+        help("Run 'peri sync' to generate a valid lockfile, or remove --locked/--frozen.")
+    )]
+    MissingLockfile,
+
+    #[error("Unsatisfied dependency in lockfile: '{package}' required by manifest ({requirement}) is not locked")]
+    #[diagnostic(
+        code(peri::lockfile::unsatisfied_dependency),
+        help("The manifest declared a dependency that is absent from peri.lock. Run 'peri sync' to update.")
+    )]
+    UnsatisfiedDependency {
+        package: String,
+        requirement: String,
+    },
+
+    #[error("Version mismatch in lockfile: package '{package}' is locked at {locked}, but manifest requires {required}")]
+    #[diagnostic(
+        code(peri::lockfile::version_mismatch),
+        help("The version locked in peri.lock does not satisfy the constraint in peri.toml. Run 'peri sync' to update.")
+    )]
+    VersionMismatch {
+        package: String,
+        required: String,
+        locked: String,
+    },
+
+    #[error("Corrupted lockfile: {0}")]
+    #[diagnostic(
+        code(peri::lockfile::corrupted),
+        help("Verify the contents of peri.lock or regenerate it with 'peri sync'.")
+    )]
+    CorruptedLockfile(String),
+}

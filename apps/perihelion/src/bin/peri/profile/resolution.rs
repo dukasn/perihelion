@@ -31,6 +31,18 @@ pub enum ProfileSource {
     Generic,
 }
 
+impl ProfileSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ProfileSource::Workspace => "workspace",
+            ProfileSource::UserConfig => "user_config",
+            ProfileSource::UserData => "user_data",
+            ProfileSource::System => "system",
+            ProfileSource::Generic => "builtin",
+        }
+    }
+}
+
 impl fmt::Display for ProfileSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

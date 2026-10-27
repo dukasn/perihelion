@@ -19,7 +19,8 @@ use std::collections::BTreeMap;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 
-use crate::error::ResolveError;
+use crate::error::{LockfileError, ResolveError};
+use crate::manifest::Manifest;
 
 pub const LOCKFILE_FILENAME: &str = "peri.lock";
 
@@ -116,6 +117,43 @@ impl Lockfile {
     }
 }
 
+/// Verifies whether an existing `peri.lock` exactly satisfies the requirements in `peri.toml`.
+///
+/// Used by `--locked` and `--frozen` to prevent drift without triggering SAT solving or writing to disk.
+pub fn verify_lockfile_sync(
+    manifest: &Manifest,
+    lockfile: Option<&Lockfile>,
+) -> Result<(), LockfileError> {
+    let lock = lockfile.ok_or(LockfileError::MissingLockfile)?;
+    let package_map = lock.package_map();
+
+    for (dep_name, req_str) in &manifest.dependencies {
+        let locked_version =
+            package_map
+                .get(dep_name)
+                .ok_or_else(|| LockfileError::UnsatisfiedDependency {
+                    package: dep_name.clone(),
+                    requirement: req_str.clone(),
+                })?;
+
+        let parsed_req = VersionReq::parse(req_str).map_err(|e| {
+            LockfileError::CorruptedLockfile(format!(
+                "Invalid SemVer constraint '{req_str}' for dependency '{dep_name}': {e}"
+            ))
+        })?;
+
+        if !parsed_req.matches(locked_version) {
+            return Err(LockfileError::VersionMismatch {
+                package: dep_name.clone(),
+                required: req_str.clone(),
+                locked: locked_version.to_string(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,5 +191,106 @@ mod tests {
 
         reqs.insert("missing_mod".to_string(), "*".to_string());
         assert!(!lock.satisfies_requirements(&reqs));
+    }
+
+    #[test]
+    fn test_verify_lockfile_sync_success() {
+        let mut deps = BTreeMap::new();
+        deps.insert("skyui".to_string(), "^5.2".to_string());
+
+        let manifest = Manifest {
+            package: crate::manifest::PackageMetadata {
+                name: "test".to_string(),
+                author: "author".to_string(),
+                version: "1.0.0".to_string(),
+                priority: Default::default(),
+                description: None,
+            },
+            target: crate::manifest::TargetGame::new("skyrim_se"),
+            assets: None,
+            dependencies: deps,
+            overrides: BTreeMap::new(),
+            load_order: None,
+        };
+
+        let mut solution = BTreeMap::new();
+        solution.insert("skyui".to_string(), Version::parse("5.2.2").unwrap());
+        let lock = Lockfile::from_solution(&solution);
+
+        assert!(verify_lockfile_sync(&manifest, Some(&lock)).is_ok());
+    }
+
+    #[test]
+    fn test_verify_lockfile_sync_missing_lockfile() {
+        let manifest = Manifest {
+            package: crate::manifest::PackageMetadata {
+                name: "test".to_string(),
+                author: "author".to_string(),
+                version: "1.0.0".to_string(),
+                priority: Default::default(),
+                description: None,
+            },
+            target: crate::manifest::TargetGame::new("skyrim_se"),
+            assets: None,
+            dependencies: BTreeMap::new(),
+            overrides: BTreeMap::new(),
+            load_order: None,
+        };
+
+        let err = verify_lockfile_sync(&manifest, None).unwrap_err();
+        assert!(matches!(err, LockfileError::MissingLockfile));
+    }
+
+    #[test]
+    fn test_verify_lockfile_sync_unsatisfied_dependency() {
+        let mut deps = BTreeMap::new();
+        deps.insert("skse64".to_string(), ">=2.2.0".to_string());
+
+        let manifest = Manifest {
+            package: crate::manifest::PackageMetadata {
+                name: "test".to_string(),
+                author: "author".to_string(),
+                version: "1.0.0".to_string(),
+                priority: Default::default(),
+                description: None,
+            },
+            target: crate::manifest::TargetGame::new("skyrim_se"),
+            assets: None,
+            dependencies: deps,
+            overrides: BTreeMap::new(),
+            load_order: None,
+        };
+
+        let lock = Lockfile::new();
+        let err = verify_lockfile_sync(&manifest, Some(&lock)).unwrap_err();
+        assert!(matches!(err, LockfileError::UnsatisfiedDependency { .. }));
+    }
+
+    #[test]
+    fn test_verify_lockfile_sync_version_mismatch() {
+        let mut deps = BTreeMap::new();
+        deps.insert("skyui".to_string(), ">=6.0.0".to_string());
+
+        let manifest = Manifest {
+            package: crate::manifest::PackageMetadata {
+                name: "test".to_string(),
+                author: "author".to_string(),
+                version: "1.0.0".to_string(),
+                priority: Default::default(),
+                description: None,
+            },
+            target: crate::manifest::TargetGame::new("skyrim_se"),
+            assets: None,
+            dependencies: deps,
+            overrides: BTreeMap::new(),
+            load_order: None,
+        };
+
+        let mut solution = BTreeMap::new();
+        solution.insert("skyui".to_string(), Version::parse("5.2.2").unwrap());
+        let lock = Lockfile::from_solution(&solution);
+
+        let err = verify_lockfile_sync(&manifest, Some(&lock)).unwrap_err();
+        assert!(matches!(err, LockfileError::VersionMismatch { .. }));
     }
 }

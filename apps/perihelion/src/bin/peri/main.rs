@@ -29,8 +29,8 @@ mod error;
 mod profile;
 
 use cli::{
-    CheckArgs, Cli, Commands, ConfigAction, ConfigArgs, GetArgs, InitArgs, PackageArgs, RunArgs,
-    SyncArgs,
+    CheckArgs, CiFlags, Cli, CliFormat, Commands, ConfigAction, ConfigArgs, GetArgs, InitArgs,
+    PackageArgs, RunArgs, SyncArgs,
 };
 use config::{load_global_config, resolve_config_dir, resolve_home_dir};
 use error::CliError;
@@ -39,9 +39,10 @@ use peri_archive::{
     load_package_vfi_cache, read_manifest_from_peca, save_package_vfi_cache,
 };
 use peri_core::{
-    solve_workspace, validate_safe_path, DependencyGraph, GameProfile, Lockfile, Manifest,
-    OverrideRule, PackageCatalog, PackageFileIndex, PackageMetadata, ResolutionSource, TargetGame,
-    VirtualFileIndex, LOCKFILE_FILENAME, MANIFEST_FILENAME,
+    solve_workspace, validate_safe_path, CheckReport, DependencyGraph, DryRunPlanReport,
+    FileConflictSummary, GameProfile, Lockfile, Manifest, OverrideRule, PackageCatalog,
+    PackageFileIndex, PackageMetadata, Priority, ResolutionSource, ResolvedPackageSummary,
+    TargetGame, VirtualFileIndex, LOCKFILE_FILENAME, MANIFEST_FILENAME,
 };
 use peri_vfs::VfsPlan;
 use profile::resolve_game_profile;
@@ -65,7 +66,12 @@ fn init_tracing(verbose: bool) {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
 
     tracing_subscriber::registry()
-        .with(fmt::layer().with_target(false).compact())
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_target(false)
+                .compact(),
+        )
         .with(filter)
         .init();
 }
@@ -74,19 +80,28 @@ fn init_tracing(verbose: bool) {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     init_tracing(cli.verbose);
+    let ci_flags = CiFlags::from_cli(&cli);
 
-    match cli.command {
-        Commands::Init(args) => handle_init(args).await?,
-        Commands::Get(args) => handle_get(args).await?,
-        Commands::Sync(args) => handle_sync(args).await?,
-        Commands::Package(args) => handle_package(args).await?,
-        Commands::Check(args) => handle_check(args).await?,
-        Commands::Run(args) => handle_run(args).await?,
-        Commands::Config(args) => handle_config(args).await?,
-        Commands::Profile(args) => profile::handle_profile(args).await?,
+    if let Err(err) = run_command(cli.command, &ci_flags).await {
+        let code = err.exit_code();
+        eprintln!("{err}");
+        std::process::exit(code);
     }
 
     Ok(())
+}
+
+async fn run_command(command: Commands, ci_flags: &CiFlags) -> Result<(), CliError> {
+    match command {
+        Commands::Init(args) => handle_init(args).await,
+        Commands::Get(args) => handle_get(args).await,
+        Commands::Sync(args) => handle_sync(args, ci_flags).await,
+        Commands::Package(args) => handle_package(args).await,
+        Commands::Check(args) => handle_check(args, ci_flags).await,
+        Commands::Run(args) => handle_run(args, ci_flags).await,
+        Commands::Config(args) => handle_config(args).await,
+        Commands::Profile(args) => profile::handle_profile(args, ci_flags).await,
+    }
 }
 
 fn load_or_cache_vfi(
@@ -364,7 +379,7 @@ async fn handle_get(args: GetArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
+async fn handle_sync(args: SyncArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
     let workspace = validate_workspace_path(&args.workspace)?;
     let span = info_span!("sync", workspace = %workspace.display());
     let _enter = span.enter();
@@ -396,6 +411,23 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
         root_manifest_opt = Some(root_manifest);
     }
 
+    let existing_lockfile: Option<Lockfile> = if lockfile_path.exists() {
+        let content =
+            fs::read_to_string(&lockfile_path).map_err(|e| CliError::Workspace(e.to_string()))?;
+        Some(Lockfile::from_toml_str(&content)?)
+    } else {
+        None
+    };
+
+    // If --locked or --frozen is active, verify lockfile drift before doing any work
+    if ci_flags.locked {
+        if let Some(ref root_manifest) = root_manifest_opt {
+            peri_core::lockfile::verify_lockfile_sync(root_manifest, existing_lockfile.as_ref())?;
+        } else if existing_lockfile.is_none() {
+            return Err(peri_core::LockfileError::MissingLockfile.into());
+        }
+    }
+
     let mut catalog = PackageCatalog::new();
     let mut peca_files: Vec<(Manifest, PathBuf)> = Vec::new();
     let vfi_cache_dir = workspace.join(VFI_CACHE_DIR);
@@ -410,32 +442,47 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
         }
     }
 
+    // If --offline or --frozen is active, ensure all required packages are present in local cache
+    if ci_flags.offline {
+        if let Some(ref root_manifest) = root_manifest_opt {
+            for dep_name in root_manifest.dependencies.keys() {
+                let found = peca_files.iter().any(|(m, _)| &m.package.name == dep_name);
+                if !found {
+                    return Err(CliError::OfflineNetworkRequired {
+                        package: dep_name.clone(),
+                    });
+                }
+            }
+        }
+    }
+
     // Stage 1: Version Selection (PubGrub CDCL SAT Solver & peri.lock)
     let selected_versions = if let Some(ref root_manifest) = root_manifest_opt {
         if !root_manifest.dependencies.is_empty() {
             let mut use_lock = false;
             let mut resolved = BTreeMap::new();
 
-            if lockfile_path.exists() {
-                if let Ok(content) = fs::read_to_string(&lockfile_path) {
-                    if let Ok(lock) = Lockfile::from_toml_str(&content) {
-                        if lock.satisfies_requirements(&root_manifest.dependencies) {
-                            resolved = lock.package_map();
-                            use_lock = true;
-                            info!("Reusing locked package versions from peri.lock");
-                        }
-                    }
+            if let Some(ref lock) = existing_lockfile {
+                if lock.satisfies_requirements(&root_manifest.dependencies) {
+                    resolved = lock.package_map();
+                    use_lock = true;
+                    info!("Reusing locked package versions from peri.lock");
                 }
             }
 
             if !use_lock {
+                if ci_flags.locked {
+                    return Err(peri_core::LockfileError::MissingLockfile.into());
+                }
                 info!("Running PubGrub CDCL SAT solver for dependencies...");
                 resolved = solve_workspace(&catalog, root_manifest)?;
                 let lockfile = Lockfile::from_solution(&resolved);
                 let lock_toml = lockfile.to_toml_str()?;
                 fs::write(&lockfile_path, lock_toml)
                     .map_err(|e| CliError::Workspace(e.to_string()))?;
-                println!("Generated updated {}", LOCKFILE_FILENAME);
+                if ci_flags.format == CliFormat::Text {
+                    println!("Generated updated {}", LOCKFILE_FILENAME);
+                }
             }
             Some(resolved)
         } else {
@@ -462,6 +509,22 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
     } else {
         peca_files
     };
+
+    // If offline, check that all selected packages actually exist in active_peca_files
+    if ci_flags.offline {
+        if let Some(ref selected) = selected_versions {
+            for pkg_name in selected.keys() {
+                if !active_peca_files
+                    .iter()
+                    .any(|(m, _)| &m.package.name == pkg_name)
+                {
+                    return Err(CliError::OfflineNetworkRequired {
+                        package: pkg_name.clone(),
+                    });
+                }
+            }
+        }
+    }
 
     let mut graph = DependencyGraph::new();
     let mut vfi = VirtualFileIndex::new();
@@ -514,12 +577,13 @@ async fn handle_sync(args: SyncArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
+async fn handle_check(args: CheckArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
     let workspace = validate_workspace_path(&args.workspace)?;
     let span = info_span!("check", workspace = %workspace.display());
     let _enter = span.enter();
 
     let root_manifest_path = workspace.join(MANIFEST_FILENAME);
+    let lockfile_path = workspace.join(LOCKFILE_FILENAME);
     let mut overrides: HashMap<String, OverrideRule> = HashMap::new();
     let mut game_profile = GameProfile::generic("generic");
     let mut root_manifest_opt = None;
@@ -533,9 +597,38 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
         root_manifest_opt = Some(root_manifest);
     }
 
+    if ci_flags.locked {
+        let existing_lockfile: Option<Lockfile> = if lockfile_path.exists() {
+            let content = fs::read_to_string(&lockfile_path)
+                .map_err(|e| CliError::Workspace(e.to_string()))?;
+            Some(Lockfile::from_toml_str(&content)?)
+        } else {
+            None
+        };
+        if let Some(ref root_manifest) = root_manifest_opt {
+            peri_core::lockfile::verify_lockfile_sync(root_manifest, existing_lockfile.as_ref())?;
+        } else if existing_lockfile.is_none() {
+            return Err(peri_core::LockfileError::MissingLockfile.into());
+        }
+    }
+
     let cache_dir = workspace.join(CACHE_MODS_DIR);
     if !cache_dir.exists() {
-        println!("No mods cached in {}", cache_dir.display());
+        if ci_flags.format == CliFormat::Json {
+            let report = CheckReport {
+                success: true,
+                game_id: game_profile.id.clone(),
+                package_count: 0,
+                active_layers: Vec::new(),
+                file_conflicts: Vec::new(),
+                has_unresolved_conflicts: false,
+            };
+            let json_str = serde_json::to_string_pretty(&report)
+                .map_err(|e| CliError::Workspace(e.to_string()))?;
+            println!("{json_str}");
+        } else {
+            println!("No mods cached in {}", cache_dir.display());
+        }
         return Ok(());
     }
 
@@ -544,6 +637,8 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
     let mut vfi = VirtualFileIndex::new();
     let mut count = 0;
     let vfi_cache_dir = workspace.join(VFI_CACHE_DIR);
+    let extracted_dir = workspace.join(EXTRACTED_DIR);
+    let mut cached_manifests: HashMap<String, Manifest> = HashMap::new();
 
     for entry in fs::read_dir(&cache_dir).map_err(|e| CliError::Workspace(e.to_string()))? {
         let entry = entry.map_err(|e| CliError::Workspace(e.to_string()))?;
@@ -558,7 +653,8 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
                     .to_string_lossy()
                     .into_owned()
             });
-            graph.add_manifest(manifest);
+            graph.add_manifest(manifest.clone());
+            cached_manifests.insert(manifest.package.name.clone(), manifest);
             count += 1;
         }
     }
@@ -567,20 +663,113 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
     if let Some(ref root_manifest) = root_manifest_opt {
         if !root_manifest.dependencies.is_empty() {
             let solved = solve_workspace(&catalog, root_manifest)?;
-            println!(
-                "Stage 1: PubGrub SAT solver verified {} version constraints.",
-                solved.len()
-            );
+            if ci_flags.format == CliFormat::Text {
+                println!(
+                    "Stage 1: PubGrub SAT solver verified {} version constraints.",
+                    solved.len()
+                );
+            }
         }
     }
 
-    println!(
-        "Stage 2 & 3: Validating dependency DAG and Virtual File Index (VFI) for {} packages...",
-        count
-    );
+    if ci_flags.format == CliFormat::Text {
+        println!(
+            "Stage 2 & 3: Validating dependency DAG and Virtual File Index (VFI) for {} packages...",
+            count
+        );
+    }
 
     // Apply the 3-Tier Resolution Waterfall
-    let reports = vfi.resolve_conflicts_waterfall(&mut graph, &overrides)?;
+    let reports_result = vfi.resolve_conflicts_waterfall(&mut graph, &overrides);
+    let reports = match reports_result {
+        Ok(r) => r,
+        Err(e) => {
+            if ci_flags.format == CliFormat::Json {
+                let (file, mod_a, mod_b) = match &e {
+                    peri_core::ResolveError::HardConflict {
+                        file, mod_a, mod_b, ..
+                    } => (file.clone(), mod_a.clone(), mod_b.clone()),
+                    _ => (String::new(), String::new(), String::new()),
+                };
+                let report = CheckReport {
+                    success: false,
+                    game_id: game_profile.id.clone(),
+                    package_count: count,
+                    active_layers: Vec::new(),
+                    file_conflicts: vec![FileConflictSummary {
+                        relative_path: file,
+                        winning_package: String::new(),
+                        shadowed_packages: vec![mod_a, mod_b],
+                        resolution_tier: "unresolved".to_string(),
+                    }],
+                    has_unresolved_conflicts: true,
+                };
+                if let Ok(json_str) = serde_json::to_string_pretty(&report) {
+                    println!("{json_str}");
+                }
+            }
+            return Err(e.into());
+        }
+    };
+
+    let order = graph.resolve_load_order()?;
+
+    if ci_flags.format == CliFormat::Json {
+        let active_layers: Vec<ResolvedPackageSummary> = order
+            .iter()
+            .map(|name| {
+                let (version, priority) = cached_manifests
+                    .get(name)
+                    .map(|m| (m.package.version.clone(), m.package.priority))
+                    .unwrap_or_else(|| ("unknown".to_string(), Priority::Default));
+                ResolvedPackageSummary {
+                    name: name.clone(),
+                    version,
+                    priority,
+                    path_in_lowerdir: Some(extracted_dir.join(name)),
+                }
+            })
+            .collect();
+
+        let file_conflicts: Vec<FileConflictSummary> = reports
+            .iter()
+            .map(|r| {
+                let (winner, resolution_tier) = match &r.source {
+                    ResolutionSource::ExplicitEdge { winner } => {
+                        (winner.clone(), "explicit_edge".to_string())
+                    }
+                    ResolutionSource::PriorityWeight { winner, .. } => {
+                        (winner.clone(), "priority_weight".to_string())
+                    }
+                };
+                let shadowed = if r.mod_a == winner {
+                    vec![r.mod_b.clone()]
+                } else {
+                    vec![r.mod_a.clone()]
+                };
+                FileConflictSummary {
+                    relative_path: r.file_path.clone(),
+                    winning_package: winner,
+                    shadowed_packages: shadowed,
+                    resolution_tier,
+                }
+            })
+            .collect();
+
+        let report = CheckReport {
+            success: true,
+            game_id: game_profile.id.clone(),
+            package_count: count,
+            active_layers,
+            file_conflicts,
+            has_unresolved_conflicts: false,
+        };
+        let json_str = serde_json::to_string_pretty(&report)
+            .map_err(|e| CliError::Workspace(e.to_string()))?;
+        println!("{json_str}");
+        return Ok(());
+    }
+
     if !reports.is_empty() {
         println!(
             "Detected and resolved {} file conflict(s) via 3-Tier Waterfall:",
@@ -606,7 +795,6 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
         println!("Virtual File Index check clean: no file conflicts detected.");
     }
 
-    let order = graph.resolve_load_order()?;
     println!("DAG check passed successfully. No cycles detected!");
     println!("Calculated Deterministic Load Order (OverlayFS stack):");
     for (idx, mod_name) in order.iter().enumerate() {
@@ -616,7 +804,7 @@ async fn handle_check(args: CheckArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-async fn handle_run(args: RunArgs) -> Result<(), CliError> {
+async fn handle_run(args: RunArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
     let workspace = validate_workspace_path(&args.workspace)?;
     let root_manifest_path = workspace.join(MANIFEST_FILENAME);
 
@@ -689,8 +877,8 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
     let work_dir = workspace.join(WORK_DIR);
 
     let plan = VfsPlan::new(base_dir.clone(), mount_point)
-        .with_layers(layers)
-        .with_upper(upper_dir, work_dir);
+        .with_layers(layers.clone())
+        .with_upper(upper_dir.clone(), work_dir.clone());
 
     let mount_options = plan.format_mount_options()?;
     let exec_cmd = args
@@ -726,6 +914,79 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
         None
     };
 
+    if args.dry_run {
+        if ci_flags.format == CliFormat::Json {
+            let mut lowerdir: Vec<PathBuf> = layers.iter().rev().cloned().collect();
+            lowerdir.push(base_dir.clone());
+
+            let mut env_map = HashMap::new();
+            if let Some(ref proton) = proton_launch {
+                for (k, v) in &proton.env_vars {
+                    env_map.insert(k.clone(), v.clone());
+                }
+            }
+
+            let report = DryRunPlanReport {
+                game_id: profile.id.clone(),
+                base_game_path: base_dir.clone(),
+                mount_point: plan.mount_point.clone(),
+                lowerdir,
+                upper_dir: upper_dir.clone(),
+                work_dir: work_dir.clone(),
+                mount_options_string: mount_options.clone(),
+                executable: PathBuf::from(&exec_cmd),
+                arguments: args.args.clone(),
+                environment: env_map,
+            };
+            let json_str = serde_json::to_string_pretty(&report)
+                .map_err(|e| CliError::Workspace(e.to_string()))?;
+            println!("{json_str}");
+            return Ok(());
+        }
+
+        println!("Preparing Perihelion Virtual File System sandbox:");
+        println!("   Game:          {} ({})", profile.name, profile.id);
+        println!(
+            "   Base Game:     {} ({})",
+            base_dir.display(),
+            resolved_base.source
+        );
+        println!("   Active Layers: {}", resolved_order.len());
+        println!("   Mount Point:   {}", plan.mount_point.display());
+        println!("   Mount Options: {}", mount_options);
+
+        if let Some(ref proton) = proton_launch {
+            println!("Compatibility Layer: Proton / Wine");
+            println!("   Proton Runner:       {}", proton.runner.display());
+            println!(
+                "   Compat Data:         {}",
+                proton.compat_data_path.display()
+            );
+            println!("   Wine Prefix:         {}", proton.wine_prefix.display());
+            println!("   Target Binary:       {} {:?}", exec_cmd, args.args);
+        } else {
+            println!("Compatibility Layer: Native Linux process");
+            println!("   Target Binary:       {} {:?}", exec_cmd, args.args);
+        }
+
+        println!("[DRY-RUN] Verification complete. Sandboxed mount and execution ready.");
+        if let Some(ref proton) = proton_launch {
+            println!(
+                "   [DRY-RUN] Command payload: {} run {} {:?}",
+                proton.runner.display(),
+                exec_cmd,
+                args.args
+            );
+            println!("   [DRY-RUN] Injected environment:");
+            for (k, v) in &proton.env_vars {
+                if k.starts_with("STEAM_") || k == "WINEPREFIX" || k.starts_with("Steam") {
+                    println!("             {k}={v}");
+                }
+            }
+        }
+        return Ok(());
+    }
+
     println!("Preparing Perihelion Virtual File System sandbox:");
     println!("   Game:          {} ({})", profile.name, profile.id);
     println!(
@@ -749,25 +1010,6 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
     } else {
         println!("Compatibility Layer: Native Linux process");
         println!("   Target Binary:       {} {:?}", exec_cmd, args.args);
-    }
-
-    if args.dry_run {
-        println!("[DRY-RUN] Verification complete. Sandboxed mount and execution ready.");
-        if let Some(ref proton) = proton_launch {
-            println!(
-                "   [DRY-RUN] Command payload: {} run {} {:?}",
-                proton.runner.display(),
-                exec_cmd,
-                args.args
-            );
-            println!("   [DRY-RUN] Injected environment:");
-            for (k, v) in &proton.env_vars {
-                if k.starts_with("STEAM_") || k == "WINEPREFIX" || k.starts_with("Steam") {
-                    println!("             {k}={v}");
-                }
-            }
-        }
-        return Ok(());
     }
 
     let exit_code = if let Some(ref proton) = proton_launch {
@@ -819,7 +1061,13 @@ game_id = "test_game"
             args: Vec::new(),
         };
 
-        let result = handle_run(run_args).await;
+        let ci_flags = CiFlags {
+            locked: false,
+            offline: false,
+            format: CliFormat::Text,
+        };
+
+        let result = handle_run(run_args, &ci_flags).await;
         assert!(result.is_ok());
     }
 
@@ -855,11 +1103,218 @@ game_id = "test_game"
             args: Vec::new(),
         };
 
-        let result = handle_run(run_args).await;
+        let ci_flags = CiFlags {
+            locked: false,
+            offline: false,
+            format: CliFormat::Text,
+        };
+
+        let result = handle_run(run_args, &ci_flags).await;
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("Could not resolve base game directory"));
         assert!(err_msg.contains("--base-path"));
         assert!(err_msg.contains("PERI_BASE_GAME"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_run_dry_run_json_format() {
+        let cur = std::env::current_dir().unwrap();
+        let temp = tempfile::Builder::new()
+            .prefix(".tmp_peri_test_")
+            .tempdir_in(&cur)
+            .unwrap();
+        let ws = temp.path().join("workspace");
+        fs::create_dir_all(&ws).unwrap();
+
+        let manifest_content = r#"
+[package]
+name = "my_modlist"
+author = "Tester"
+version = "0.1.0"
+
+[target]
+game_id = "test_game"
+"#;
+        fs::write(ws.join(MANIFEST_FILENAME), manifest_content).unwrap();
+
+        let custom_game = temp.path().join("custom_game_root");
+        fs::create_dir_all(&custom_game).unwrap();
+
+        let run_args = RunArgs {
+            workspace: ws,
+            base_path: Some(custom_game),
+            dry_run: true,
+            exec: Some("echo hello".to_string()),
+            proton: None,
+            prefix: None,
+            native: true,
+            args: vec!["--arg1".to_string()],
+        };
+
+        let ci_flags = CiFlags {
+            locked: false,
+            offline: false,
+            format: CliFormat::Json,
+        };
+
+        let result = handle_run(run_args, &ci_flags).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_handle_check_json_format() {
+        let cur = std::env::current_dir().unwrap();
+        let temp = tempfile::Builder::new()
+            .prefix(".tmp_peri_test_")
+            .tempdir_in(&cur)
+            .unwrap();
+        let ws = temp.path().join("workspace");
+        fs::create_dir_all(&ws).unwrap();
+
+        let manifest_content = r#"
+[package]
+name = "my_modlist"
+author = "Tester"
+version = "0.1.0"
+
+[target]
+game_id = "test_game"
+"#;
+        fs::write(ws.join(MANIFEST_FILENAME), manifest_content).unwrap();
+
+        let check_args = CheckArgs { workspace: ws };
+        let ci_flags = CiFlags {
+            locked: false,
+            offline: false,
+            format: CliFormat::Json,
+        };
+
+        let result = handle_check(check_args, &ci_flags).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_handle_sync_locked_missing_lockfile_exit_code_5() {
+        let cur = std::env::current_dir().unwrap();
+        let temp = tempfile::Builder::new()
+            .prefix(".tmp_peri_test_")
+            .tempdir_in(&cur)
+            .unwrap();
+        let ws = temp.path().join("workspace");
+        fs::create_dir_all(ws.join(CACHE_MODS_DIR)).unwrap();
+
+        let manifest_content = r#"
+[package]
+name = "my_modlist"
+author = "Tester"
+version = "0.1.0"
+
+[target]
+game_id = "test_game"
+
+[dependencies]
+skyui = "^5.2"
+"#;
+        fs::write(ws.join(MANIFEST_FILENAME), manifest_content).unwrap();
+
+        let sync_args = SyncArgs { workspace: ws };
+        let ci_flags = CiFlags {
+            locked: true,
+            offline: false,
+            format: CliFormat::Text,
+        };
+
+        let result = handle_sync(sync_args, &ci_flags).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.exit_code(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_handle_sync_offline_missing_package_exit_code_6() {
+        let cur = std::env::current_dir().unwrap();
+        let temp = tempfile::Builder::new()
+            .prefix(".tmp_peri_test_")
+            .tempdir_in(&cur)
+            .unwrap();
+        let ws = temp.path().join("workspace");
+        fs::create_dir_all(ws.join(CACHE_MODS_DIR)).unwrap();
+
+        let manifest_content = r#"
+[package]
+name = "my_modlist"
+author = "Tester"
+version = "0.1.0"
+
+[target]
+game_id = "test_game"
+
+[dependencies]
+skyui = "^5.2"
+"#;
+        fs::write(ws.join(MANIFEST_FILENAME), manifest_content).unwrap();
+
+        let sync_args = SyncArgs { workspace: ws };
+        let ci_flags = CiFlags {
+            locked: false,
+            offline: true,
+            format: CliFormat::Text,
+        };
+
+        let result = handle_sync(sync_args, &ci_flags).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.exit_code(), 6);
+    }
+
+    #[tokio::test]
+    async fn test_manifest_syntax_error_exit_code_2() {
+        let cur = std::env::current_dir().unwrap();
+        let temp = tempfile::Builder::new()
+            .prefix(".tmp_peri_test_")
+            .tempdir_in(&cur)
+            .unwrap();
+        let ws = temp.path().join("workspace");
+        fs::create_dir_all(&ws).unwrap();
+
+        fs::write(ws.join(MANIFEST_FILENAME), "invalid toml syntax [[[").unwrap();
+
+        let check_args = CheckArgs { workspace: ws };
+        let ci_flags = CiFlags {
+            locked: false,
+            offline: false,
+            format: CliFormat::Text,
+        };
+
+        let result = handle_check(check_args, &ci_flags).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.exit_code(), 2);
+    }
+
+    #[test]
+    fn test_exit_codes_mapping() {
+        let hard_conflict = peri_core::ResolveError::HardConflict {
+            file: "Data/file.txt".to_string(),
+            mod_a: "mod_a".to_string(),
+            mod_b: "mod_b".to_string(),
+            priority: "default".to_string(),
+        };
+        assert_eq!(CliError::Resolve(hard_conflict).exit_code(), 3);
+
+        let cycle = peri_core::ResolveError::CyclicDependencyDetected("a -> b -> a".to_string());
+        assert_eq!(CliError::Resolve(cycle).exit_code(), 4);
+
+        let lock_err = peri_core::LockfileError::MissingLockfile;
+        assert_eq!(CliError::Lockfile(lock_err).exit_code(), 5);
+
+        let offline_err = CliError::OfflineNetworkRequired {
+            package: "foo".to_string(),
+        };
+        assert_eq!(offline_err.exit_code(), 6);
+
+        let io_err = CliError::Workspace("io failed".to_string());
+        assert_eq!(io_err.exit_code(), 1);
     }
 }

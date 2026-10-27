@@ -74,10 +74,35 @@ pub enum CliError {
     )]
     ProfileCommand(String),
 
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Lockfile(#[from] peri_core::LockfileError),
+
+    #[error("Network needed in offline mode: package '{package}' is not available in local cache")]
+    #[diagnostic(
+        code(peri::offline_mode),
+        help("Package '{package}' is required but --offline or --frozen is active. Download it first or disable offline mode.")
+    )]
+    OfflineNetworkRequired { package: String },
+
     #[allow(dead_code)]
     #[error("Command failed: {0}")]
     #[diagnostic(code(peri::command_error))]
     Execution(String),
+}
+
+impl CliError {
+    /// Returns standardized machine-readable exit code.
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            CliError::Manifest(_) => 2,
+            CliError::Resolve(peri_core::ResolveError::HardConflict { .. }) => 3,
+            CliError::Resolve(_) => 4,
+            CliError::Lockfile(_) => 5,
+            CliError::OfflineNetworkRequired { .. } => 6,
+            _ => 1,
+        }
+    }
 }
 
 impl From<peri_archive::ArchiveError> for CliError {

@@ -28,6 +28,7 @@ pub mod lockfile;
 pub mod manifest;
 pub mod path;
 pub mod profile;
+pub mod report;
 pub mod security;
 pub mod signature;
 pub mod solver;
@@ -41,15 +42,21 @@ pub use draft::{
     ExecutionSessionMetadata, SessionDraft, StagedChanges, UiContext, DRAFT_FILENAME,
     DRAFT_SCHEMA_VERSION, DRAFT_TMP_FILENAME,
 };
-pub use error::{ConfigError, ManifestError, ProfileError, ResolveError, SecurityError};
+pub use error::{
+    ConfigError, LockfileError, ManifestError, ProfileError, ResolveError, SecurityError,
+};
 pub use graph::{DependencyGraph, EdgeType};
-pub use lockfile::{LockedPackage, Lockfile, LOCKFILE_FILENAME};
+pub use lockfile::{verify_lockfile_sync, LockedPackage, Lockfile, LOCKFILE_FILENAME};
 pub use manifest::{
     Assets, LoadOrderRules, Manifest, OverrideRule, PackageMetadata, Priority, TargetGame,
     MANIFEST_FILENAME,
 };
 pub use path::{hash_normalized_path, CompiledMappingRule, FastPathRouter, NormalizedPath};
 pub use profile::{GameProfile, LayoutMapping};
+pub use report::{
+    CheckReport, DryRunPlanReport, FileConflictSummary, OutputFormat, ProfileSummaryReport,
+    ResolvedPackageSummary,
+};
 pub use security::validate_safe_path;
 pub use signature::{EngineSignature, SignatureRegistry};
 pub use solver::{
