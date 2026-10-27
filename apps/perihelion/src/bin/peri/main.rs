@@ -44,7 +44,7 @@ use peri_core::{
     PackageFileIndex, PackageMetadata, Priority, ResolutionSource, ResolvedPackageSummary,
     TargetGame, VirtualFileIndex, LOCKFILE_FILENAME, MANIFEST_FILENAME,
 };
-use peri_vfs::VfsPlan;
+use peri_vfs::{CommandWrapper, RunnerKind, RunnerPipeline, VfsPlan};
 use profile::resolve_game_profile;
 
 const CACHE_MODS_DIR: &str = ".perihelion/cache/mods";
@@ -886,33 +886,93 @@ async fn handle_run(args: RunArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
         .or(profile.default_executable)
         .unwrap_or_else(|| "echo 'No executable configured'".to_string());
 
-    let use_proton = !args.native
-        && (profile.steam_app_id.is_some()
-            || args.proton.is_some()
-            || args.prefix.is_some()
-            || exec_cmd.to_lowercase().ends_with(".exe"));
+    // 1. Assemble wrapper pipeline
+    let mut wrappers = Vec::new();
+    if args.gamemode {
+        wrappers.push(CommandWrapper::gamemode());
+    }
+    if args.mangohud {
+        wrappers.push(CommandWrapper::mangohud());
+    }
+    if let Some(ref gs_opts) = args.gamescope {
+        let custom_opts = if gs_opts.is_empty() {
+            None
+        } else {
+            Some(gs_opts.as_str())
+        };
+        wrappers.push(CommandWrapper::gamescope(custom_opts));
+    }
+    for raw_wrapper in &args.wrappers {
+        if let Some(wrapper) = CommandWrapper::parse(raw_wrapper) {
+            wrappers.push(wrapper);
+        }
+    }
 
-    let proton_launch = if use_proton {
-        match peri_vfs::SteamDiscovery::resolve_proton_launch_with_config(
-            profile.steam_app_id,
-            args.proton.as_deref(),
-            args.prefix.as_deref(),
-            &provider,
-        ) {
-            Ok(launch) => Some(launch),
-            Err(e) => {
-                if args.proton.is_some() || args.prefix.is_some() {
-                    return Err(CliError::Vfs(e.to_string()));
-                }
-                info!(
-                    "Proton auto-discovery did not find an active installation ({e}); falling back to native runner"
-                );
-                None
-            }
+    // 2. Resolve compatibility runner
+    let runner_kind = if args.native {
+        RunnerKind::Native
+    } else if let Some(ref wine_bin) = args.wine {
+        let wine_prefix = if let Some(ref pfx) = args.prefix {
+            pfx.clone()
+        } else if let Ok(env_pfx) = std::env::var("WINEPREFIX") {
+            PathBuf::from(env_pfx)
+        } else if let Some(app_id) = profile.steam_app_id {
+            let steam_root =
+                peri_vfs::SteamDiscovery::find_active_steam_root_with_config(&provider)
+                    .unwrap_or_else(|| {
+                        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+                            .join(".local/share/Steam")
+                    });
+            steam_root.join(format!("steamapps/compatdata/{app_id}/pfx"))
+        } else {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            PathBuf::from(home).join(".wine")
+        };
+        RunnerKind::Wine {
+            runner: wine_bin.clone(),
+            prefix: wine_prefix,
         }
     } else {
-        None
+        let use_proton = profile.steam_app_id.is_some()
+            || args.proton.is_some()
+            || args.prefix.is_some()
+            || exec_cmd.to_lowercase().ends_with(".exe");
+
+        if use_proton {
+            match peri_vfs::SteamDiscovery::resolve_proton_launch_with_config(
+                profile.steam_app_id,
+                args.proton.as_deref(),
+                args.prefix.as_deref(),
+                &provider,
+            ) {
+                Ok(launch) => RunnerKind::Proton(launch),
+                Err(e) => {
+                    if args.proton.is_some() || args.prefix.is_some() {
+                        return Err(CliError::Vfs(e.to_string()));
+                    }
+                    info!(
+                        "Proton auto-discovery did not find an active installation ({e}); falling back to native runner"
+                    );
+                    RunnerKind::Native
+                }
+            }
+        } else {
+            RunnerKind::Native
+        }
     };
+
+    // 3. Assemble environment variables
+    let mut env_vars = Vec::new();
+    if args.mangohud {
+        env_vars.push(("MANGOHUD".to_string(), "1".to_string()));
+    }
+
+    // 4. Construct complete RunnerPipeline
+    let pipeline = RunnerPipeline::new(&exec_cmd)
+        .with_runner(runner_kind)
+        .with_args(args.args.clone())
+        .with_wrappers(wrappers)
+        .with_envs(env_vars);
 
     if args.dry_run {
         if ci_flags.format == CliFormat::Json {
@@ -920,10 +980,8 @@ async fn handle_run(args: RunArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
             lowerdir.push(base_dir.clone());
 
             let mut env_map = HashMap::new();
-            if let Some(ref proton) = proton_launch {
-                for (k, v) in &proton.env_vars {
-                    env_map.insert(k.clone(), v.clone());
-                }
+            for (k, v) in pipeline.collected_env_vars() {
+                env_map.insert(k, v);
             }
 
             let report = DryRunPlanReport {
@@ -937,6 +995,9 @@ async fn handle_run(args: RunArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
                 executable: PathBuf::from(&exec_cmd),
                 arguments: args.args.clone(),
                 environment: env_map,
+                runner: Some(pipeline.runner_name().to_string()),
+                wrappers: pipeline.wrapper_names(),
+                command_line: pipeline.build_argv(),
             };
             let json_str = serde_json::to_string_pretty(&report)
                 .map_err(|e| CliError::Workspace(e.to_string()))?;
@@ -955,35 +1016,46 @@ async fn handle_run(args: RunArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
         println!("   Mount Point:   {}", plan.mount_point.display());
         println!("   Mount Options: {}", mount_options);
 
-        if let Some(ref proton) = proton_launch {
-            println!("Compatibility Layer: Proton / Wine");
-            println!("   Proton Runner:       {}", proton.runner.display());
-            println!(
-                "   Compat Data:         {}",
-                proton.compat_data_path.display()
-            );
-            println!("   Wine Prefix:         {}", proton.wine_prefix.display());
-            println!("   Target Binary:       {} {:?}", exec_cmd, args.args);
-        } else {
-            println!("Compatibility Layer: Native Linux process");
-            println!("   Target Binary:       {} {:?}", exec_cmd, args.args);
+        println!("Runner Pipeline:");
+        match &pipeline.runner {
+            RunnerKind::Native => {
+                println!("   Compatibility: Native Linux process");
+            }
+            RunnerKind::Wine { runner, prefix } => {
+                println!("   Compatibility: Wine");
+                println!("   Wine Runner:   {}", runner.display());
+                println!("   Wine Prefix:   {}", prefix.display());
+            }
+            RunnerKind::Proton(p) => {
+                println!("   Compatibility: Valve Proton");
+                println!("   Proton Runner: {}", p.runner.display());
+                println!("   Compat Data:   {}", p.compat_data_path.display());
+                println!("   Wine Prefix:   {}", p.wine_prefix.display());
+            }
+            RunnerKind::Custom { runner, .. } => {
+                println!("   Compatibility: Custom ({})", runner.display());
+            }
         }
+        if !pipeline.wrappers.is_empty() {
+            println!("   Wrappers:      {}", pipeline.wrapper_names().join(", "));
+        }
+        println!("   Full Command:  {}", pipeline.build_argv().join(" "));
 
-        println!("[DRY-RUN] Verification complete. Sandboxed mount and execution ready.");
-        if let Some(ref proton) = proton_launch {
-            println!(
-                "   [DRY-RUN] Command payload: {} run {} {:?}",
-                proton.runner.display(),
-                exec_cmd,
-                args.args
-            );
-            println!("   [DRY-RUN] Injected environment:");
-            for (k, v) in &proton.env_vars {
-                if k.starts_with("STEAM_") || k == "WINEPREFIX" || k.starts_with("Steam") {
+        let envs = pipeline.collected_env_vars();
+        if !envs.is_empty() {
+            println!("   Injected environment:");
+            for (k, v) in &envs {
+                if k.starts_with("STEAM_")
+                    || k == "WINEPREFIX"
+                    || k.starts_with("Steam")
+                    || k == "MANGOHUD"
+                {
                     println!("             {k}={v}");
                 }
             }
         }
+
+        println!("[DRY-RUN] Verification complete. Sandboxed mount and execution ready.");
         return Ok(());
     }
 
@@ -998,25 +1070,32 @@ async fn handle_run(args: RunArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
     println!("   Mount Point:   {}", plan.mount_point.display());
     println!("   Mount Options: {}", mount_options);
 
-    if let Some(ref proton) = proton_launch {
-        println!("Compatibility Layer: Proton / Wine");
-        println!("   Proton Runner:       {}", proton.runner.display());
-        println!(
-            "   Compat Data:         {}",
-            proton.compat_data_path.display()
-        );
-        println!("   Wine Prefix:         {}", proton.wine_prefix.display());
-        println!("   Target Binary:       {} {:?}", exec_cmd, args.args);
-    } else {
-        println!("Compatibility Layer: Native Linux process");
-        println!("   Target Binary:       {} {:?}", exec_cmd, args.args);
+    println!("Runner Pipeline:");
+    match &pipeline.runner {
+        RunnerKind::Native => {
+            println!("   Compatibility: Native Linux process");
+        }
+        RunnerKind::Wine { runner, prefix } => {
+            println!("   Compatibility: Wine");
+            println!("   Wine Runner:   {}", runner.display());
+            println!("   Wine Prefix:   {}", prefix.display());
+        }
+        RunnerKind::Proton(p) => {
+            println!("   Compatibility: Valve Proton");
+            println!("   Proton Runner: {}", p.runner.display());
+            println!("   Compat Data:   {}", p.compat_data_path.display());
+            println!("   Wine Prefix:   {}", p.wine_prefix.display());
+        }
+        RunnerKind::Custom { runner, .. } => {
+            println!("   Compatibility: Custom ({})", runner.display());
+        }
     }
+    if !pipeline.wrappers.is_empty() {
+        println!("   Wrappers:      {}", pipeline.wrapper_names().join(", "));
+    }
+    println!("   Full Command:  {}", pipeline.build_argv().join(" "));
 
-    let exit_code = if let Some(ref proton) = proton_launch {
-        peri_vfs::execute_proton_in_isolated_namespace(&plan, proton, &exec_cmd, &args.args)?
-    } else {
-        peri_vfs::execute_in_isolated_namespace(&plan, &exec_cmd, &args.args)?
-    };
+    let exit_code = peri_vfs::execute_pipeline_in_isolated_namespace(&plan, &pipeline)?;
     info!(exit_code = exit_code, "Execution finished");
 
     Ok(())
@@ -1055,7 +1134,12 @@ game_id = "test_game"
             base_path: Some(custom_game),
             dry_run: true,
             exec: Some("echo hello".to_string()),
+            wrappers: Vec::new(),
+            gamemode: false,
+            gamescope: None,
+            mangohud: false,
             proton: None,
+            wine: None,
             prefix: None,
             native: true,
             args: Vec::new(),
@@ -1097,7 +1181,12 @@ game_id = "test_game"
             base_path: None,
             dry_run: true,
             exec: Some("echo hello".to_string()),
+            wrappers: Vec::new(),
+            gamemode: false,
+            gamescope: None,
+            mangohud: false,
             proton: None,
+            wine: None,
             prefix: None,
             native: true,
             args: Vec::new(),
@@ -1146,10 +1235,68 @@ game_id = "test_game"
             base_path: Some(custom_game),
             dry_run: true,
             exec: Some("echo hello".to_string()),
+            wrappers: Vec::new(),
+            gamemode: false,
+            gamescope: None,
+            mangohud: false,
             proton: None,
+            wine: None,
             prefix: None,
             native: true,
             args: vec!["--arg1".to_string()],
+        };
+
+        let ci_flags = CiFlags {
+            locked: false,
+            offline: false,
+            format: CliFormat::Json,
+        };
+
+        let result = handle_run(run_args, &ci_flags).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_handle_run_with_runner_pipeline_and_wrappers() {
+        let cur = std::env::current_dir().unwrap();
+        let temp = tempfile::Builder::new()
+            .prefix(".tmp_peri_test_")
+            .tempdir_in(&cur)
+            .unwrap();
+        let ws = temp.path().join("workspace");
+        fs::create_dir_all(&ws).unwrap();
+
+        let manifest_content = r#"
+[package]
+name = "my_modlist"
+author = "Tester"
+version = "0.1.0"
+
+[target]
+game_id = "test_game"
+"#;
+        fs::write(ws.join(MANIFEST_FILENAME), manifest_content).unwrap();
+
+        let custom_game = temp.path().join("custom_game_root");
+        fs::create_dir_all(&custom_game).unwrap();
+
+        let pfx = temp.path().join("wine_prefix");
+        fs::create_dir_all(&pfx).unwrap();
+
+        let run_args = RunArgs {
+            workspace: ws,
+            base_path: Some(custom_game),
+            dry_run: true,
+            exec: Some("SkyrimSE.exe".to_string()),
+            wrappers: vec!["strace -f".to_string()],
+            gamemode: true,
+            gamescope: Some("-w 1920 -h 1080".to_string()),
+            mangohud: true,
+            proton: None,
+            wine: Some(PathBuf::from("/usr/bin/wine")),
+            prefix: Some(pfx),
+            native: false,
+            args: vec!["--skip-intro".to_string()],
         };
 
         let ci_flags = CiFlags {

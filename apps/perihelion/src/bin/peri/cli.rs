@@ -288,6 +288,33 @@ pub struct RunArgs {
     #[arg(long, value_name = "COMMAND", help_heading = "Execution Options")]
     pub exec: Option<String>,
 
+    /// Prefix wrapper command(s) (e.g. gamemoderun, mangohud, "gamescope -w 1920 -h 1080 --")
+    #[arg(
+        long = "wrapper",
+        value_name = "CMD",
+        action = clap::ArgAction::Append,
+        help_heading = "Execution Options"
+    )]
+    pub wrappers: Vec<String>,
+
+    /// Run through GameMode (gamemoderun) optimization wrapper
+    #[arg(long, help_heading = "Execution Options")]
+    pub gamemode: bool,
+
+    /// Run through gamescope micro-compositor with optional arguments (e.g. --gamescope or --gamescope="-w 1920 -h 1080 -f")
+    #[arg(
+        long,
+        value_name = "OPTS",
+        num_args = 0..=1,
+        default_missing_value = "",
+        help_heading = "Execution Options"
+    )]
+    pub gamescope: Option<String>,
+
+    /// Enable MangoHud performance overlay
+    #[arg(long, help_heading = "Execution Options")]
+    pub mangohud: bool,
+
     /// Explicit path to Proton runner binary or installation directory
     #[arg(
         long,
@@ -296,6 +323,16 @@ pub struct RunArgs {
         help_heading = "Environment Options"
     )]
     pub proton: Option<PathBuf>,
+
+    /// Execute via system Wine runner (optionally specify custom wine binary path)
+    #[arg(
+        long,
+        value_name = "PATH",
+        num_args = 0..=1,
+        default_missing_value = "wine",
+        help_heading = "Environment Options"
+    )]
+    pub wine: Option<PathBuf>,
 
     /// Explicit path to Wine prefix or compatdata directory
     #[arg(

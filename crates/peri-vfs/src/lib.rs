@@ -22,16 +22,17 @@
 pub mod base_game;
 pub mod engine;
 pub mod proton;
+pub mod runner;
 
 pub use base_game::{resolve_base_game_path, BaseGameQuery, BaseGameSource, ResolvedBaseGame};
 pub use engine::{
     detect_engine_layout, find_executable_for_engine, probe_game_directory, wildcard_match,
 };
 pub use proton::{DiscoveredSteamApp, ProtonLaunch, ProtonTool, SteamDiscovery};
+pub use runner::{CommandWrapper, RunnerKind, RunnerPipeline};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{unshare, CloneFlags};
@@ -371,6 +372,51 @@ fn apply_sandbox_policy(plan: &VfsPlan, policy: &SandboxPolicy) -> Result<(), Vf
     Ok(())
 }
 
+/// Executes an arbitrary `RunnerPipeline` inside an isolated Linux user + mount namespace.
+/// Automatically constructs a hardened `SandboxPolicy` whitelisting runner prefixes and runtime paths.
+pub fn execute_pipeline_in_isolated_namespace(
+    plan: &VfsPlan,
+    pipeline: &RunnerPipeline,
+) -> Result<i32, VfsError> {
+    let policy = pipeline.build_sandbox_policy(plan);
+    execute_pipeline_in_isolated_namespace_with_policy(plan, &policy, pipeline)
+}
+
+/// Executes a `RunnerPipeline` inside an isolated namespace with an explicit `SandboxPolicy`.
+pub fn execute_pipeline_in_isolated_namespace_with_policy(
+    plan: &VfsPlan,
+    policy: &SandboxPolicy,
+    pipeline: &RunnerPipeline,
+) -> Result<i32, VfsError> {
+    let span = info_span!("execute_pipeline", runner = pipeline.runner_name());
+    let _enter = span.enter();
+    debug!("Spawning isolated namespace and executing runner pipeline");
+
+    let euid = geteuid();
+    let egid = getegid();
+
+    // 1. Spawn new user and mount namespaces
+    unshare(CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS)
+        .map_err(|e| VfsError::NamespaceFailed(format!("unshare failed: {e}")))?;
+
+    // 2. Map UID and GID to allow unprivileged root inside the namespace
+    setup_id_mapping(euid.as_raw(), egid.as_raw())?;
+
+    // 3. Apply Zero-Trust execution boundary (read-only root + writable whitelisting)
+    apply_sandbox_policy(plan, policy)?;
+
+    // 4. Mount OverlayFS within the isolated namespace
+    mount_overlay(plan)?;
+
+    // 5. Build and execute target command
+    let mut cmd = pipeline.build_command(&plan.mount_point)?;
+    let status = cmd
+        .status()
+        .map_err(|e| VfsError::ExecutionFailed(format!("Failed to execute process: {e}")))?;
+
+    Ok(status.code().unwrap_or(-1))
+}
+
 /// Spawns an isolated Linux user + mount namespace and executes a target command within it.
 pub fn execute_in_isolated_namespace(
     plan: &VfsPlan,
@@ -404,39 +450,10 @@ pub fn execute_in_isolated_namespace_with_policy(
     args: &[String],
     env_vars: &[(String, String)],
 ) -> Result<i32, VfsError> {
-    let span = info_span!("execute_in_isolated_namespace", command = %command);
-    let _enter = span.enter();
-    debug!("Spawning isolated namespace and configuring sandbox");
-
-    let euid = geteuid();
-    let egid = getegid();
-
-    // 1. Spawn new user and mount namespaces
-    unshare(CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS)
-        .map_err(|e| VfsError::NamespaceFailed(format!("unshare failed: {e}")))?;
-
-    // 2. Map UID and GID to allow unprivileged root inside the namespace
-    setup_id_mapping(euid.as_raw(), egid.as_raw())?;
-
-    // 3. Apply Zero-Trust execution boundary (read-only root + writable whitelisting)
-    apply_sandbox_policy(plan, policy)?;
-
-    // 4. Mount OverlayFS within the isolated namespace
-    mount_overlay(plan)?;
-
-    // 5. Execute target process
-    let mut cmd = Command::new(command);
-    cmd.args(args).current_dir(&plan.mount_point);
-
-    for (k, v) in env_vars {
-        cmd.env(k, v);
-    }
-
-    let status = cmd
-        .status()
-        .map_err(|e| VfsError::ExecutionFailed(format!("Failed to execute process: {e}")))?;
-
-    Ok(status.code().unwrap_or(-1))
+    let pipeline = RunnerPipeline::native(command)
+        .with_args(args.iter().cloned())
+        .with_envs(env_vars.iter().cloned());
+    execute_pipeline_in_isolated_namespace_with_policy(plan, policy, &pipeline)
 }
 
 /// Executes a Windows game binary via Proton inside the sandboxed OverlayFS namespace.
@@ -447,11 +464,9 @@ pub fn execute_proton_in_isolated_namespace(
     game_executable: &str,
     args: &[String],
 ) -> Result<i32, VfsError> {
-    let policy = SandboxPolicy::default()
-        .with_writable_path(proton.compat_data_path.clone())
-        .with_writable_path(proton.wine_prefix.clone());
-
-    execute_proton_in_isolated_namespace_with_policy(plan, &policy, proton, game_executable, args)
+    let pipeline =
+        RunnerPipeline::proton(proton.clone(), game_executable).with_args(args.iter().cloned());
+    execute_pipeline_in_isolated_namespace(plan, &pipeline)
 }
 
 /// Executes a Windows game binary via Proton with an explicit sandbox policy.
@@ -462,16 +477,9 @@ pub fn execute_proton_in_isolated_namespace_with_policy(
     game_executable: &str,
     args: &[String],
 ) -> Result<i32, VfsError> {
-    let mut proton_args = vec!["run".to_string(), game_executable.to_string()];
-    proton_args.extend(args.iter().cloned());
-
-    execute_in_isolated_namespace_with_policy(
-        plan,
-        policy,
-        &proton.runner.to_string_lossy(),
-        &proton_args,
-        &proton.env_vars,
-    )
+    let pipeline =
+        RunnerPipeline::proton(proton.clone(), game_executable).with_args(args.iter().cloned());
+    execute_pipeline_in_isolated_namespace_with_policy(plan, policy, &pipeline)
 }
 
 fn setup_id_mapping(uid: u32, gid: u32) -> Result<(), VfsError> {

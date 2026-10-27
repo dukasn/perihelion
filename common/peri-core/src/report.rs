@@ -77,6 +77,12 @@ pub struct DryRunPlanReport {
     pub executable: PathBuf,
     pub arguments: Vec<String>,
     pub environment: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wrappers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command_line: Vec<String>,
 }
 
 /// Structured game profile summary for `peri profile list --format json`.
@@ -154,6 +160,15 @@ mod tests {
             executable: PathBuf::from("bin/x64/Cyberpunk2077.exe"),
             arguments: vec!["-skipStartScreen".to_string()],
             environment: env,
+            runner: Some("proton".to_string()),
+            wrappers: vec!["gamemoderun".to_string()],
+            command_line: vec![
+                "gamemoderun".to_string(),
+                "proton".to_string(),
+                "run".to_string(),
+                "bin/x64/Cyberpunk2077.exe".to_string(),
+                "-skipStartScreen".to_string(),
+            ],
         };
 
         let json = serde_json::to_string_pretty(&report).expect("Serialize dry-run report");
