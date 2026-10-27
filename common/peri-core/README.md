@@ -31,7 +31,7 @@ No system calls live here. No async runtime runs here. No network requests exist
 | [`lockfile`](./src/lockfile.rs) | Serializes and parses `peri.lock` files to pin exact package versions and archive checksums. |
 | [`draft`](./src/draft.rs) | In-memory session draft state tracking staged user edits before committing to disk. |
 | [`security`](./src/security.rs) | Enforces path safety rules, blocking directory traversal attacks (`..` escapes) and absolute path injections. |
-| [`config`](./src/config.rs) | Data models for global configuration (`config.toml`), embedding baseline platform providers and engine signatures from `data/discovery.toml`. |
+| [`config`](./src/config.rs) | Data models for global configuration (`config.toml`), platform providers, and engine signatures. |
 | [`error`](./src/error.rs) | Typed domain errors (`ManifestError`, `ResolveError`, `ProfileError`, `ConfigError`, `SecurityError`). |
 
 ---

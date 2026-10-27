@@ -35,7 +35,7 @@ pub mod vfi;
 
 pub use config::{
     GlobalConfig, MappingRegistry, NetworkConfig, ProviderConfig, SteamConfig, StorageConfig,
-    UiConfig, BUILTIN_DISCOVERY_TOML, CONFIG_FILENAME,
+    UiConfig, CONFIG_FILENAME,
 };
 pub use draft::{
     ExecutionSessionMetadata, SessionDraft, StagedChanges, UiContext, DRAFT_FILENAME,

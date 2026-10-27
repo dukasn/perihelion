@@ -84,10 +84,61 @@ impl EngineSignature {
 }
 
 /// Registry of known game engine signatures.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SignatureRegistry {
-    #[serde(default)]
     signatures: BTreeMap<String, EngineSignature>,
+}
+
+impl Serialize for SignatureRegistry {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let list: Vec<&EngineSignature> = self.signatures.values().collect();
+        list.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SignatureRegistry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum SigFormat {
+            List(Vec<EngineSignature>),
+            Map(BTreeMap<String, EngineSignature>),
+            Wrapped {
+                #[serde(default)]
+                signatures: Vec<EngineSignature>,
+            },
+        }
+
+        let format = SigFormat::deserialize(deserializer)?;
+        let mut reg = SignatureRegistry::new();
+        match format {
+            SigFormat::List(list) => {
+                for sig in list {
+                    reg.register(sig);
+                }
+            }
+            SigFormat::Map(map) => {
+                for (k, mut sig) in map {
+                    if sig.id.is_empty() {
+                        sig.id = k;
+                    }
+                    reg.register(sig);
+                }
+            }
+            SigFormat::Wrapped { signatures } => {
+                for sig in signatures {
+                    reg.register(sig);
+                }
+            }
+        }
+        Ok(reg)
+    }
 }
 
 impl SignatureRegistry {

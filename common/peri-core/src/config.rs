@@ -25,10 +25,6 @@ use crate::signature::{EngineSignature, SignatureRegistry};
 
 pub const CONFIG_FILENAME: &str = "config.toml";
 
-/// Default embedded TOML configuration for platform discovery and layout mapping LUT.
-/// Compiled directly into the binary from `data/discovery.toml`.
-pub const BUILTIN_DISCOVERY_TOML: &str = include_str!("../data/discovery.toml");
-
 fn default_upload_limit() -> u32 {
     1024
 }
@@ -162,38 +158,16 @@ impl MappingRegistry {
 /// Type alias maintaining backward-compatibility for Steam discovery lookups.
 pub type SteamConfig = ProviderConfig;
 
-#[derive(Debug, Clone, Deserialize)]
-struct BuiltinDiscoveryToml {
-    #[serde(default)]
-    providers: BTreeMap<String, ProviderConfig>,
-    #[serde(default)]
-    signatures: Vec<EngineSignature>,
-    #[serde(default)]
-    mappings: MappingRegistry,
-}
-
-fn parse_builtin_discovery() -> BuiltinDiscoveryToml {
-    toml::from_str(BUILTIN_DISCOVERY_TOML).unwrap_or(BuiltinDiscoveryToml {
-        providers: BTreeMap::new(),
-        signatures: Vec::new(),
-        mappings: MappingRegistry::default(),
-    })
-}
-
 fn default_providers() -> BTreeMap<String, ProviderConfig> {
-    parse_builtin_discovery().providers
+    BTreeMap::new()
 }
 
 fn default_signatures() -> SignatureRegistry {
-    let mut reg = SignatureRegistry::new();
-    for sig in parse_builtin_discovery().signatures {
-        reg.register(sig);
-    }
-    reg
+    SignatureRegistry::new()
 }
 
 fn default_mappings() -> MappingRegistry {
-    parse_builtin_discovery().mappings
+    MappingRegistry::default()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -303,6 +277,9 @@ mod tests {
             cfg.storage.global_cache_dir,
             PathBuf::from("~/.local/share/perihelion/cache")
         );
+        assert!(cfg.providers.is_empty());
+        assert!(cfg.signatures().is_empty());
+        assert!(cfg.mappings.default.is_empty());
     }
 
     #[test]
@@ -313,6 +290,8 @@ mod tests {
             cfg.storage.global_cache_dir,
             PathBuf::from("/var/home/dukasn/.local/share/perihelion/cache")
         );
+        assert!(cfg.providers.is_empty());
+        assert!(cfg.signatures().is_empty());
     }
 
     #[test]
@@ -324,6 +303,9 @@ enable_dht = false
 
 [storage]
 global_cache_dir = "/custom/cache/dir"
+
+[providers.steam]
+roots = ["/custom/steam"]
 "#;
         let cfg = GlobalConfig::from_toml_str(toml_data).expect("should parse valid toml");
         assert_eq!(cfg.network.daemon_upload_limit_kbs, 2048);
@@ -393,56 +375,38 @@ redengine = [
     }
 
     #[test]
-    fn test_builtin_discovery_config_loads_from_asset_toml() {
-        let cfg = GlobalConfig::default();
+    fn test_signatures_and_providers_deserialization() {
+        let toml_data = r#"
+[providers.steam]
+roots = ["~/.local/share/Steam"]
+binary_extensions = ["exe"]
+environment = ["MANGOHUD"]
+
+[[signatures]]
+id = "bethesda_creation"
+name = "Bethesda Creation Engine"
+priority = 100
+anchors = ["Data"]
+markers = ["Data/*.esm"]
+binary_subdirs = [".", "bin"]
+binary_extensions = ["exe"]
+mappings = [
+    { from = "SKSE", to = "Data/SKSE" }
+]
+"#;
+        let cfg = GlobalConfig::from_toml_str(toml_data).expect("should parse valid toml");
         let steam = cfg.provider("steam");
-        assert!(!steam.roots.is_empty());
-        assert!(steam.roots.contains(&PathBuf::from("~/.local/share/Steam")));
-        assert!(steam
-            .roots
-            .contains(&PathBuf::from("~/snap/steam/common/.local/share/Steam")));
-        assert!(steam.binary_extensions.contains(&"exe".to_string()));
-        assert!(steam.environment.contains(&"MANGOHUD".to_string()));
+        assert_eq!(steam.roots, vec![PathBuf::from("~/.local/share/Steam")]);
+        assert_eq!(steam.binary_extensions, vec!["exe".to_string()]);
+        assert_eq!(steam.environment, vec!["MANGOHUD".to_string()]);
 
-        // Signatures loaded from embedded asset baseline
         let sigs = cfg.signatures();
-        assert!(!sigs.is_empty());
+        assert_eq!(sigs.len(), 1);
         let bethesda = sigs
             .get("bethesda_creation")
             .expect("bethesda creation engine present");
         assert_eq!(bethesda.anchors, vec!["Data"]);
         assert!(bethesda.mappings.iter().any(|m| m.from_prefix == "SKSE"));
-
-        let redengine = sigs.get("redengine_4").expect("redengine 4 present");
-        assert_eq!(redengine.binary_subdirs, vec!["bin/x64"]);
-
-        let unreal = sigs.get("unreal_engine").expect("unreal engine present");
-        assert_eq!(
-            unreal.binary_subdirs,
-            vec!["Binaries/Win64", "Binaries/Linux"]
-        );
-
-        // Engine detection via abstract probe
-        let detected = cfg.detect_engine(|path| path == "Data" || path == "Data/*.esm");
-        assert_eq!(detected.map(|s| s.id.as_str()), Some("bethesda_creation"));
-
-        // Signatures loaded from embedded asset baseline
-        let sigs = cfg.signatures();
-        assert!(!sigs.is_empty());
-        let bethesda = sigs
-            .get("bethesda_creation")
-            .expect("bethesda creation engine present");
-        assert_eq!(bethesda.anchors, vec!["Data"]);
-        assert!(bethesda.mappings.iter().any(|m| m.from_prefix == "SKSE"));
-
-        let redengine = sigs.get("redengine_4").expect("redengine 4 present");
-        assert_eq!(redengine.binary_subdirs, vec!["bin/x64"]);
-
-        let unreal = sigs.get("unreal_engine").expect("unreal engine present");
-        assert_eq!(
-            unreal.binary_subdirs,
-            vec!["Binaries/Win64", "Binaries/Linux"]
-        );
 
         // Engine detection via abstract probe
         let detected = cfg.detect_engine(|path| path == "Data" || path == "Data/*.esm");
