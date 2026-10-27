@@ -1,0 +1,17 @@
+# Unreal Engine Universal Layout Signature
+# Place in ~/.config/perihelion/signatures/unreal_engine.toml
+
+id = "unreal_engine"
+name = "Unreal Engine Universal"
+priority = 50
+anchors = ["Engine/Binaries"]
+markers = ["*/*/Content/Paks", "*/Content/Paks"]
+binary_subdirs = ["Binaries/Win64", "Binaries/Linux"]
+binary_extensions = ["exe", "bin"]
+environment = ["DXVK_HUD"]
+mappings = [
+    { from = "~mods", to = "Content/Paks/~mods" },
+    { from = "LogicMods", to = "Content/Paks/LogicMods" },
+    { from = "Binaries", to = "Binaries" },
+]
+content_extensions = ["pak", "ucas", "utoc"]

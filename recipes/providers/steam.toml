@@ -1,0 +1,41 @@
+# Valve Steam Platform Provider
+# Place in ~/.config/perihelion/providers/steam.toml or embed under [providers.steam] in config.toml
+
+roots = [
+    "~/.local/share/Steam",
+    "~/.steam/root",
+    "~/.steam/steam",
+    "~/.var/app/com.valvesoftware.Steam/data/Steam",
+    "~/.var/app/com.valvesoftware.Steam/.local/share/Steam",
+    "~/snap/steam/common/.local/share/Steam",
+]
+libraries = []
+compatibility_dirs = [
+    "compatibilitytools.d",
+    "root/compatibilitytools.d",
+    "~/.local/share/Steam/compatibilitytools.d",
+]
+binary_subdirs = [
+    "bin/x64",
+    "bin",
+    "x64",
+    "Binaries/Win64",
+    "bin64",
+]
+binary_extensions = [
+    "exe",
+]
+environment = [
+    "VK_ICD_FILENAMES",
+    "VK_LAYER_PATH",
+    "MANGOHUD",
+    "MANGOHUD_CONFIG",
+    "DXVK_HUD",
+    "ENABLE_VKBASALT",
+    "PROTON_ENABLE_NVAPI",
+    "WINE_FULLSCREEN_FSR",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_RUNTIME_DIR",
+    "PULSE_SERVER",
+]

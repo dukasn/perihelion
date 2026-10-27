@@ -1,0 +1,15 @@
+# Unity Engine Layout Signature
+# Place in ~/.config/perihelion/signatures/unity_engine.toml
+
+id = "unity_engine"
+name = "Unity Engine"
+priority = 40
+anchors = ["*_Data"]
+markers = ["*_Data/Managed", "MonoBleedingEdge"]
+binary_subdirs = ["."]
+binary_extensions = ["exe", "x86_64"]
+environment = ["DXVK_HUD"]
+mappings = [
+    { from = "BepInEx", to = "BepInEx" },
+]
+content_extensions = ["assets", "bundle"]

@@ -1,0 +1,18 @@
+# Bethesda Creation Engine Layout Signature
+# Place in ~/.config/perihelion/signatures/bethesda_creation.toml
+
+id = "bethesda_creation"
+name = "Bethesda Creation Engine"
+priority = 100
+anchors = ["Data"]
+markers = ["Data/*.esm", "Data/*.esp", "*_loader.exe", "Data/*.ba2", "Data/*.bsa"]
+binary_subdirs = [".", "bin"]
+binary_extensions = ["exe"]
+environment = ["PROTON_ENABLE_NVAPI", "DXVK_HUD"]
+mappings = [
+    { from = "Data", to = "Data" },
+    { from = "SKSE", to = "Data/SKSE" },
+    { from = "F4SE", to = "Data/F4SE" },
+    { from = "SFSE", to = "Data/SFSE" },
+]
+content_extensions = ["esp", "esm", "esl", "ba2", "bsa", "nif", "dds"]

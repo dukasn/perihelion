@@ -1,0 +1,19 @@
+# REDengine 4 (Cyberpunk 2077) Layout Signature
+# Place in ~/.config/perihelion/signatures/redengine_4.toml
+
+id = "redengine_4"
+name = "REDengine 4 (Cyberpunk 2077)"
+priority = 150
+anchors = ["bin/x64"]
+markers = ["r6/config", "archive/pc/content", "bin/x64/Cyberpunk2077.exe"]
+binary_subdirs = ["bin/x64"]
+binary_extensions = ["exe"]
+environment = ["DXVK_HUD", "PROTON_ENABLE_NVAPI"]
+mappings = [
+    { from = "mods", to = "archive/pc/mod" },
+    { from = "archive", to = "archive" },
+    { from = "r6", to = "r6" },
+    { from = "redscript", to = "r6/scripts" },
+    { from = "bin", to = "bin" },
+]
+content_extensions = ["archive", "reds", "lua"]
