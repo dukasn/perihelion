@@ -26,6 +26,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 mod cli;
 mod config;
 mod error;
+mod profile;
 
 use cli::{
     CheckArgs, Cli, Commands, ConfigAction, ConfigArgs, GetArgs, InitArgs, PackageArgs, RunArgs,
@@ -43,6 +44,7 @@ use peri_core::{
     VirtualFileIndex, LOCKFILE_FILENAME, MANIFEST_FILENAME,
 };
 use peri_vfs::VfsPlan;
+use profile::resolve_game_profile;
 
 const CACHE_MODS_DIR: &str = ".perihelion/cache/mods";
 const VFI_CACHE_DIR: &str = ".perihelion/cache/vfi";
@@ -50,7 +52,7 @@ const EXTRACTED_DIR: &str = ".perihelion/extracted";
 const UPPER_DIR: &str = ".perihelion/upper";
 const WORK_DIR: &str = ".perihelion/work";
 const MOUNT_DIR: &str = ".perihelion/mnt";
-const PROFILES_DIR: &str = ".perihelion/profiles";
+pub(crate) const PROFILES_DIR: &str = ".perihelion/profiles";
 
 fn init_tracing(verbose: bool) {
     let default_filter = if verbose {
@@ -81,51 +83,10 @@ async fn main() -> Result<()> {
         Commands::Check(args) => handle_check(args).await?,
         Commands::Run(args) => handle_run(args).await?,
         Commands::Config(args) => handle_config(args).await?,
+        Commands::Profile(args) => profile::handle_profile(args).await?,
     }
 
     Ok(())
-}
-
-fn resolve_game_profile(workspace: &Path, game_id: &str) -> GameProfile {
-    let mut custom_profiles = Vec::new();
-
-    // 1. Check workspace profiles: .perihelion/profiles/*.toml
-    let ws_profiles = workspace.join(PROFILES_DIR);
-    if ws_profiles.exists() {
-        if let Ok(entries) = fs::read_dir(ws_profiles) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("toml") {
-                    if let Ok(content) = fs::read_to_string(path) {
-                        if let Ok(profile) = GameProfile::from_toml_str(&content) {
-                            custom_profiles.push(profile);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. Check user config directory: ~/.config/perihelion/profiles/*.toml
-    if let Ok(home) = std::env::var("HOME") {
-        let user_profiles = PathBuf::from(home).join(".config/perihelion/profiles");
-        if user_profiles.exists() {
-            if let Ok(entries) = fs::read_dir(user_profiles) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().and_then(|s| s.to_str()) == Some("toml") {
-                        if let Ok(content) = fs::read_to_string(path) {
-                            if let Ok(profile) = GameProfile::from_toml_str(&content) {
-                                custom_profiles.push(profile);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    GameProfile::resolve(game_id, &custom_profiles)
 }
 
 fn load_or_cache_vfi(
@@ -142,7 +103,7 @@ fn load_or_cache_vfi(
     Ok(index)
 }
 
-fn validate_workspace_path(path: &Path) -> Result<PathBuf, CliError> {
+pub(crate) fn validate_workspace_path(path: &Path) -> Result<PathBuf, CliError> {
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -729,10 +690,13 @@ async fn handle_run(args: RunArgs) -> Result<(), CliError> {
             || exec_cmd.to_lowercase().ends_with(".exe"));
 
     let proton_launch = if use_proton {
-        match peri_vfs::SteamDiscovery::resolve_proton_launch(
+        let global_config = crate::config::load_global_config();
+        let provider = global_config.provider("steam");
+        match peri_vfs::SteamDiscovery::resolve_proton_launch_with_config(
             profile.steam_app_id,
             args.proton.as_deref(),
             args.prefix.as_deref(),
+            &provider,
         ) {
             Ok(launch) => Some(launch),
             Err(e) => {

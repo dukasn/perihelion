@@ -107,6 +107,17 @@ pub enum Commands {
                       peri config init"
     )]
     Config(ConfigArgs),
+
+    /// Manage declarative game profiles and VFS layout translations
+    #[command(
+        about = "Manage declarative game profiles and VFS layout translations",
+        after_help = "EXAMPLES:\n  \
+                      peri profile new cyberpunk_2077 --name \"Cyberpunk 2077\" --exec bin/x64/Cyberpunk2077.exe --map mods:archive/pc/mod\n  \
+                      peri profile new elden_ring --from-steam 1245620 --global\n  \
+                      peri profile list\n  \
+                      peri profile show cyberpunk_2077"
+    )]
+    Profile(ProfileArgs),
 }
 
 #[derive(Debug, Args)]
@@ -264,4 +275,121 @@ pub enum ConfigAction {
     /// Initialize default ~/.config/perihelion/config.toml
     #[command(about = "Initialize default ~/.config/perihelion/config.toml")]
     Init,
+}
+
+#[derive(Debug, Args)]
+pub struct ProfileArgs {
+    #[command(subcommand)]
+    pub action: ProfileAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProfileAction {
+    /// Create or scaffold a new game profile TOML definition
+    #[command(
+        about = "Create or scaffold a new game profile TOML definition",
+        after_help = "EXAMPLES:\n  \
+                      peri profile new cyberpunk_2077 --name \"Cyberpunk 2077\" --exec bin/x64/Cyberpunk2077.exe --map mods:archive/pc/mod\n  \
+                      peri profile new elden_ring --steam-id 1245620 --global\n  \
+                      peri profile new skyrim_se --from-steam 489830"
+    )]
+    New(ProfileNewArgs),
+
+    /// List all discovered game profiles across workspace, user, and system paths
+    #[command(
+        about = "List all discovered game profiles across workspace, user, and system paths"
+    )]
+    List(ProfileListArgs),
+
+    /// Inspect a specific game profile and its VFS layout prefix mappings
+    #[command(
+        about = "Inspect a specific game profile and its VFS layout prefix mappings",
+        after_help = "EXAMPLES:\n  \
+                      peri profile show cyberpunk_2077\n  \
+                      peri profile show generic --raw"
+    )]
+    Show(ProfileShowArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ProfileNewArgs {
+    /// Target game identifier (e.g., cyberpunk_2077, elden_ring)
+    #[arg(value_name = "GAME_ID")]
+    pub game_id: String,
+
+    /// Human-readable display name for the game
+    #[arg(short, long, value_name = "NAME")]
+    pub name: Option<String>,
+
+    /// Steam Application ID for Proton and Steam library integration
+    #[arg(long, value_name = "APP_ID")]
+    pub steam_id: Option<u64>,
+
+    /// Installation path of the game to inspect and auto-detect engine layout
+    #[arg(long = "game-path", value_name = "DIR", value_hint = ValueHint::DirPath)]
+    pub game_path: Option<PathBuf>,
+
+    /// Default executable binary path relative to game root (e.g., bin/game.exe)
+    #[arg(short, long, value_name = "PATH")]
+    pub exec: Option<String>,
+
+    /// VFS layout prefix mapping in 'from_prefix:to_prefix' format (repeatable)
+    #[arg(short, long = "map", value_name = "FROM:TO")]
+    pub mappings: Vec<String>,
+
+    /// Save globally to ~/.config/perihelion/profiles/ instead of workspace
+    #[arg(short, long)]
+    pub global: bool,
+
+    /// Auto-detect game title and executable from local Steam library using the Steam App ID
+    #[arg(long, value_name = "APP_ID")]
+    pub from_steam: Option<u64>,
+
+    /// Target workspace directory (used when saving locally; defaults to ".")
+    #[arg(
+        short,
+        long,
+        default_value = ".",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath
+    )]
+    pub workspace: PathBuf,
+
+    /// Overwrite existing profile if it already exists
+    #[arg(short, long)]
+    pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ProfileListArgs {
+    /// Target workspace directory (defaults to ".")
+    #[arg(
+        short,
+        long,
+        default_value = ".",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath
+    )]
+    pub workspace: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct ProfileShowArgs {
+    /// Target game identifier to inspect
+    #[arg(value_name = "GAME_ID")]
+    pub game_id: String,
+
+    /// Target workspace directory (defaults to ".")
+    #[arg(
+        short,
+        long,
+        default_value = ".",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath
+    )]
+    pub workspace: PathBuf,
+
+    /// Output raw TOML instead of formatted summary
+    #[arg(long)]
+    pub raw: bool,
 }

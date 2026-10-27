@@ -67,6 +67,13 @@ pub enum CliError {
     )]
     Workspace(String),
 
+    #[error("Profile command error: {0}")]
+    #[diagnostic(
+        code(peri::profile_command_error),
+        help("Verify game profile syntax, destination directory permissions, or use --force to overwrite.")
+    )]
+    ProfileCommand(String),
+
     #[allow(dead_code)]
     #[error("Command failed: {0}")]
     #[diagnostic(code(peri::command_error))]
