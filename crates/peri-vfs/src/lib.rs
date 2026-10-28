@@ -308,11 +308,20 @@ fn apply_sandbox_policy(plan: &VfsPlan, policy: &SandboxPolicy) -> Result<(), Vf
 
         // Collect all explicitly whitelisted writable paths
         let mut writable = policy.writable_paths.clone();
-        if let Some(upper) = &plan.upper_dir {
-            writable.push(upper.clone());
-        }
-        if let Some(work) = &plan.work_dir {
-            writable.push(work.clone());
+        // overlayfs rejects upperdir/workdir on different mounts (EINVAL), so
+        // they must share one bind mount via their common ancestor.
+        match (&plan.upper_dir, &plan.work_dir) {
+            (Some(upper), Some(work)) => {
+                let common: PathBuf = upper
+                    .components()
+                    .zip(work.components())
+                    .take_while(|(a, b)| a == b)
+                    .map(|(a, _)| a)
+                    .collect();
+                writable.push(common);
+            }
+            (Some(dir), None) | (None, Some(dir)) => writable.push(dir.clone()),
+            (None, None) => {}
         }
 
         debug!(
