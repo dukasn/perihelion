@@ -193,6 +193,13 @@ pub enum ConfigError {
     )]
     ParseError(String),
 
+    #[error("Cannot read global config: {0}")]
+    #[diagnostic(
+        code(peri::config::unreadable),
+        help("Check the permissions of ~/.config/perihelion/config.toml")
+    )]
+    Unreadable(String),
+
     #[error("Invalid configuration value for '{key}': {reason}")]
     #[diagnostic(code(peri::config::invalid_value))]
     InvalidValue { key: String, reason: String },

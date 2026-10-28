@@ -20,10 +20,10 @@ use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
 use peri_core::{
-    EngineSignature, GlobalConfig, ProviderConfig, SignatureRegistry, CONFIG_FILENAME,
+    ConfigError, EngineSignature, GlobalConfig, ProviderConfig, SignatureRegistry, CONFIG_FILENAME,
 };
 use serde::Deserialize;
-use tracing::{debug, warn};
+use tracing::debug;
 
 #[derive(Deserialize)]
 struct SignaturesDocument {
@@ -182,39 +182,35 @@ pub fn resolve_home_dir() -> Option<PathBuf> {
     std::env::var("HOME").ok().map(PathBuf::from)
 }
 
-pub fn load_global_config_with_workspace(workspace: Option<&Path>) -> GlobalConfig {
+/// Reads `config_file`; `Ok(None)` means it doesn't exist. Invalid or unreadable files are errors.
+fn read_config_file(config_file: &Path) -> Result<Option<GlobalConfig>, ConfigError> {
+    if !config_file.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(config_file)
+        .map_err(|e| ConfigError::Unreadable(format!("{}: {e}", config_file.display())))?;
+    let cfg = GlobalConfig::from_toml_str(&content).map_err(|e| match e {
+        ConfigError::ParseError(msg) => {
+            ConfigError::ParseError(format!("{}: {msg}", config_file.display()))
+        }
+        other => other,
+    })?;
+    debug!(path = %config_file.display(), "Loaded global configuration");
+    Ok(Some(cfg))
+}
+
+pub fn load_global_config_with_workspace(
+    workspace: Option<&Path>,
+) -> Result<GlobalConfig, ConfigError> {
     let config_dir = resolve_config_dir();
     let config_file = config_dir.join(CONFIG_FILENAME);
 
-    let mut cfg = if config_file.exists() {
-        if let Ok(content) = fs::read_to_string(&config_file) {
-            match GlobalConfig::from_toml_str(&content) {
-                Ok(loaded) => {
-                    debug!(path = %config_file.display(), "Loaded global configuration");
-                    loaded
-                }
-                Err(e) => {
-                    warn!(
-                        path = %config_file.display(),
-                        error = %e,
-                        "Failed to parse config.toml; falling back to defaults"
-                    );
-                    if let Some(home) = resolve_home_dir() {
-                        GlobalConfig::default_for_home(&home)
-                    } else {
-                        GlobalConfig::default()
-                    }
-                }
-            }
-        } else if let Some(home) = resolve_home_dir() {
-            GlobalConfig::default_for_home(&home)
-        } else {
-            GlobalConfig::default()
-        }
-    } else if let Some(home) = resolve_home_dir() {
-        GlobalConfig::default_for_home(&home)
-    } else {
-        GlobalConfig::default()
+    let mut cfg = match read_config_file(&config_file)? {
+        Some(loaded) => loaded,
+        None => match resolve_home_dir() {
+            Some(home) => GlobalConfig::default_for_home(&home),
+            None => GlobalConfig::default(),
+        },
     };
 
     let cascading_signatures = load_cascading_signatures(&config_dir, workspace);
@@ -225,9 +221,44 @@ pub fn load_global_config_with_workspace(workspace: Option<&Path>) -> GlobalConf
         cfg.providers.entry(k).or_insert(v);
     }
 
-    cfg
+    Ok(cfg)
 }
 
-pub fn load_global_config() -> GlobalConfig {
+pub fn load_global_config() -> Result<GlobalConfig, ConfigError> {
     load_global_config_with_workspace(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_read_config_file_missing_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_config_file(&dir.path().join("config.toml"))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn test_read_config_file_invalid_is_error_with_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[network\nbroken").unwrap();
+
+        match read_config_file(&path) {
+            Err(ConfigError::ParseError(msg)) => {
+                assert!(msg.contains(&path.display().to_string()))
+            }
+            other => panic!("expected ParseError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_read_config_file_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, GlobalConfig::default().to_toml_str().unwrap()).unwrap();
+        assert!(read_config_file(&path).unwrap().is_some());
+    }
 }
