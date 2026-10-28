@@ -526,6 +526,24 @@ async fn handle_sync(args: SyncArgs, ci_flags: &CiFlags) -> Result<(), CliError>
         }
     }
 
+    // Verify cached archives against peri.lock digests and record any missing ones.
+    if selected_versions.is_some() && lockfile_path.exists() {
+        let content =
+            fs::read_to_string(&lockfile_path).map_err(|e| CliError::Workspace(e.to_string()))?;
+        let mut lock = Lockfile::from_toml_str(&content)?;
+        let mut digests = BTreeMap::new();
+        for (manifest, path) in &active_peca_files {
+            digests.insert(manifest.package.name.clone(), compute_file_sha256(path)?);
+        }
+        lock.verify_checksums(&digests)?;
+        let before = lock.clone();
+        lock.fill_checksums(&digests);
+        if lock != before && !ci_flags.locked {
+            fs::write(&lockfile_path, lock.to_toml_str()?)
+                .map_err(|e| CliError::Workspace(e.to_string()))?;
+        }
+    }
+
     let mut graph = DependencyGraph::new();
     let mut vfi = VirtualFileIndex::new();
 

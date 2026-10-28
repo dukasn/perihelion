@@ -72,6 +72,31 @@ impl Lockfile {
         }
     }
 
+    /// Fails if any locked checksum differs from the supplied `(name -> sha256)` digests.
+    pub fn verify_checksums(&self, actual: &BTreeMap<String, String>) -> Result<(), LockfileError> {
+        for pkg in &self.package {
+            if let (Some(expected), Some(found)) = (&pkg.checksum, actual.get(&pkg.name)) {
+                if !expected.eq_ignore_ascii_case(found) {
+                    return Err(LockfileError::ChecksumMismatch {
+                        package: pkg.name.clone(),
+                        expected: expected.clone(),
+                        actual: found.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Records digests for packages that don't have one yet; existing ones are kept.
+    pub fn fill_checksums(&mut self, actual: &BTreeMap<String, String>) {
+        for pkg in &mut self.package {
+            if pkg.checksum.is_none() {
+                pkg.checksum = actual.get(&pkg.name).cloned();
+            }
+        }
+    }
+
     /// Returns a map of package name to parsed `semver::Version`.
     pub fn package_map(&self) -> BTreeMap<String, Version> {
         let mut map = BTreeMap::new();
@@ -173,6 +198,27 @@ mod tests {
 
         let deserialized = Lockfile::from_toml_str(&serialized).expect("should parse lockfile");
         assert_eq!(lock, deserialized);
+    }
+
+    #[test]
+    fn test_lockfile_checksums_fill_and_verify() {
+        let mut solution = BTreeMap::new();
+        solution.insert("cet".to_string(), Version::parse("1.30.0").unwrap());
+        let mut lock = Lockfile::from_solution(&solution);
+
+        let mut sums = BTreeMap::new();
+        sums.insert("cet".to_string(), "abc123".to_string());
+        lock.fill_checksums(&sums);
+        assert_eq!(lock.package[0].checksum.as_deref(), Some("abc123"));
+        assert!(lock.verify_checksums(&sums).is_ok());
+
+        sums.insert("cet".to_string(), "def456".to_string());
+        lock.fill_checksums(&sums);
+        assert_eq!(lock.package[0].checksum.as_deref(), Some("abc123"));
+        assert!(matches!(
+            lock.verify_checksums(&sums),
+            Err(LockfileError::ChecksumMismatch { .. })
+        ));
     }
 
     #[test]

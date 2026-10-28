@@ -256,4 +256,15 @@ pub enum LockfileError {
         help("Verify the contents of peri.lock or regenerate it with 'peri sync'.")
     )]
     CorruptedLockfile(String),
+
+    #[error("Checksum mismatch for '{package}': peri.lock expects {expected}, cached archive is {actual}")]
+    #[diagnostic(
+        code(peri::lockfile::checksum_mismatch),
+        help("The cached .peca differs from the one that was locked. Delete it from .perihelion/cache/mods and re-run 'peri get', or remove peri.lock if the change is intended.")
+    )]
+    ChecksumMismatch {
+        package: String,
+        expected: String,
+        actual: String,
+    },
 }
