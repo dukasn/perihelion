@@ -146,7 +146,7 @@ async fn handle_config(args: ConfigArgs) -> Result<(), CliError> {
             println!("{}", config_file.display());
         }
         ConfigAction::Show => {
-            let config = load_global_config();
+            let config = load_global_config()?;
             let toml = config.to_toml_str()?;
             println!(
                 "# Global configuration from: {}\n{}",
@@ -308,7 +308,7 @@ async fn handle_get(args: GetArgs) -> Result<(), CliError> {
     let span = info_span!("get", uri = %args.uri);
     let _enter = span.enter();
 
-    let _global_config = load_global_config();
+    let _global_config = load_global_config()?;
     let cache_dir = Path::new(CACHE_MODS_DIR);
     fs::create_dir_all(cache_dir).map_err(|e| CliError::Workspace(e.to_string()))?;
 
@@ -879,7 +879,7 @@ async fn handle_run(args: RunArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
         .map(|name| extracted_dir.join(name))
         .collect();
 
-    let global_config = crate::config::load_global_config_with_workspace(Some(&workspace));
+    let global_config = crate::config::load_global_config_with_workspace(Some(&workspace))?;
     let provider = global_config.provider("steam");
 
     let resolved_base = peri_vfs::resolve_base_game_path(&peri_vfs::BaseGameQuery {
