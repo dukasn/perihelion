@@ -36,7 +36,8 @@ use std::path::{Path, PathBuf};
 
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{unshare, CloneFlags};
-use nix::unistd::{getegid, geteuid};
+use nix::sys::wait::{waitpid, WaitStatus};
+use nix::unistd::{fork, getegid, geteuid, ForkResult};
 use thiserror::Error;
 use tracing::{debug, info, info_span, warn};
 
@@ -392,6 +393,41 @@ pub fn execute_pipeline_in_isolated_namespace_with_policy(
     let _enter = span.enter();
     debug!("Spawning isolated namespace and executing runner pipeline");
 
+    // CLONE_NEWUSER fails with EINVAL in a multi-threaded process (tokio runtime),
+    // so the namespace work happens in a forked single-threaded child.
+    // SAFETY: the child only runs syscalls and process spawning, then _exit()s.
+    match unsafe { fork() }? {
+        ForkResult::Child => {
+            let code = match run_in_new_namespaces(plan, policy, pipeline) {
+                Ok(code) => code,
+                Err(e) => {
+                    eprintln!("{e}");
+                    CHILD_SETUP_FAILED
+                }
+            };
+            // SAFETY: _exit skips destructors/atexit handlers inherited from the parent.
+            unsafe { nix::libc::_exit(code) }
+        }
+        ForkResult::Parent { child } => match waitpid(child, None)? {
+            WaitStatus::Exited(_, CHILD_SETUP_FAILED) => Err(VfsError::NamespaceFailed(
+                "sandbox setup failed (details printed above)".to_string(),
+            )),
+            WaitStatus::Exited(_, code) => Ok(code),
+            WaitStatus::Signaled(_, sig, _) => Ok(128 + sig as i32),
+            other => Err(VfsError::ExecutionFailed(format!(
+                "unexpected child status: {other:?}"
+            ))),
+        },
+    }
+}
+
+const CHILD_SETUP_FAILED: i32 = 125;
+
+fn run_in_new_namespaces(
+    plan: &VfsPlan,
+    policy: &SandboxPolicy,
+    pipeline: &RunnerPipeline,
+) -> Result<i32, VfsError> {
     let euid = geteuid();
     let egid = getegid();
 
