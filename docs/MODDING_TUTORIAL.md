@@ -180,7 +180,7 @@ texture_framework = ">=1.0.0"
 Turn loose assets into a distributable archive:
 
 ```bash
-peri package ./my-texture-mod -o ./dist/high_res_terrain-1.2.0.peca
+peri package -s ./my-texture-mod -o ./dist/high_res_terrain-1.2.0.peca
 ```
 
 Perihelion validates manifest fields and inspects target game tags. Then it indexes file entries and streams the payload through multi-threaded zstd.
@@ -386,7 +386,7 @@ game_id = "skyrim_se"
 Package the archive:
 
 ```bash
-peri package /tmp/skse_pkg -o ~/Games/SkyrimWorkspace/skse64-2.2.6.peca
+peri package -s /tmp/skse_pkg -o ~/Games/SkyrimWorkspace/skse64-2.2.6.peca
 ```
 
 #### Packaging SkyUI
@@ -421,7 +421,7 @@ skse64 = "^2.2.6"
 Package the archive:
 
 ```bash
-peri package /tmp/skyui_pkg -o ~/Games/SkyrimWorkspace/skyui-5.2.0.peca
+peri package -s /tmp/skyui_pkg -o ~/Games/SkyrimWorkspace/skyui-5.2.0.peca
 ```
 
 ---

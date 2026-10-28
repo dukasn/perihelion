@@ -121,8 +121,8 @@ pub enum Commands {
     #[command(
         about = "Pack a mod folder containing peri.toml into a validated .peca archive",
         after_help = "EXAMPLES:\n  \
-                      peri package ./my-mod\n  \
-                      peri package ./my-mod -o ./dist/mod-1.0.0.peca --level 19"
+                      peri package -s ./my-mod\n  \
+                      peri package -s ./my-mod -o ./dist/mod-1.0.0.peca --level 19"
     )]
     Package(PackageArgs),
 
