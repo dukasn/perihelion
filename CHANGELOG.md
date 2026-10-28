@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/dukasn/perihelion/compare/v0.1.2...v0.1.3) - 2026-10-28
+
+### Added
+
+- *(vfs,cli)* implement pluggable runner pipeline for wine, native, and wrapper chains
+- *(core,cli)* implement headless automation primitives, JSON output, and lock verification
+- *(vfs,cli)* implement dynamic base game resolution ladder and arbitrary lower roots
+- *(vfs,cli,helion)* support cascading signature and provider discovery
+- *(helion)* add game profile wizard and steam game importer to tui
+- *(cli)* modularize profile management and add engine layout auto-detection
+
+### Fixed
+
+- *(archive,cli)* apply profile layout mappings and drop peri.toml when unpacking layers
+
+### Other
+
+- *(cli)* use --source in peri package examples
+- restructure tutorial into universal modding guide with Skyrim SE example
+- add end-to-end Skyrim SE modding tutorial and guide links
+
 ## [0.1.2](https://github.com/dukasn/perihelion/compare/v0.1.1...v0.1.2) - 2026-10-26
 
 ### Added
