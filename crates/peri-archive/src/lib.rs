@@ -283,6 +283,47 @@ pub fn extract_peca(peca_path: &Path, destination_dir: &Path) -> Result<Manifest
     Ok(manifest)
 }
 
+/// Extracts a `.peca` archive as a VFS layer: entries are relocated through `map`
+/// and the root `peri.toml` is parsed but not written into the layer.
+pub fn extract_peca_layer(
+    peca_path: &Path,
+    destination_dir: &Path,
+    map: impl Fn(&Path) -> PathBuf,
+) -> Result<Manifest, ArchiveError> {
+    let span = info_span!("extract_peca_layer", peca = %peca_path.display(), destination = %destination_dir.display());
+    let _enter = span.enter();
+
+    fs::create_dir_all(destination_dir)?;
+
+    let decoder = zstd::stream::Decoder::new(BufReader::new(File::open(peca_path)?))
+        .map_err(|e| ArchiveError::Compression(e.to_string()))?;
+    let mut archive = tar::Archive::new(decoder);
+    let mut manifest = None;
+
+    for entry_result in archive.entries()? {
+        let mut entry = entry_result?;
+        let path = entry.path()?.into_owned();
+        validate_safe_path(&path, destination_dir)?;
+
+        if path == Path::new(MANIFEST_FILENAME) {
+            let mut content = String::new();
+            entry.read_to_string(&mut content)?;
+            manifest = Some(Manifest::from_toml_str(&content)?);
+            continue;
+        }
+
+        let target = map(&path);
+        validate_safe_path(&target, destination_dir)?;
+        let full = destination_dir.join(&target);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        entry.unpack(&full)?;
+    }
+
+    manifest.ok_or(ArchiveError::MissingManifest)
+}
+
 fn num_cpus() -> u32 {
     std::thread::available_parallelism()
         .map(|n| n.get() as u32)
@@ -325,6 +366,42 @@ game_id = "test_game"
             extract_peca(&peca_file, extract_dir.path()).expect("extract_peca should succeed");
         assert_eq!(extracted_manifest.package.name, "Test Mod");
         assert!(extract_dir.path().join("readme.txt").exists());
+    }
+
+    #[test]
+    fn test_extract_layer_maps_paths_and_skips_manifest() {
+        let src_dir = tempdir().unwrap();
+        let out_dir = tempdir().unwrap();
+        let layer_dir = tempdir().unwrap();
+
+        let manifest_content = r#"
+[package]
+name = "Test Mod"
+author = "Tester"
+version = "1.0.0"
+
+[target]
+game_id = "test_game"
+"#;
+        fs::write(src_dir.path().join(MANIFEST_FILENAME), manifest_content).unwrap();
+        fs::create_dir_all(src_dir.path().join("SKSE/Plugins")).unwrap();
+        fs::write(src_dir.path().join("SKSE/Plugins/a.ini"), "x").unwrap();
+
+        let peca_file = out_dir.path().join("test.peca");
+        create_peca(src_dir.path(), &peca_file, 3).unwrap();
+
+        let manifest = extract_peca_layer(&peca_file, layer_dir.path(), |p| {
+            match p.strip_prefix("SKSE") {
+                Ok(rest) => Path::new("Data/SKSE").join(rest),
+                Err(_) => p.to_path_buf(),
+            }
+        })
+        .unwrap();
+
+        assert_eq!(manifest.package.name, "Test Mod");
+        assert!(layer_dir.path().join("Data/SKSE/Plugins/a.ini").exists());
+        assert!(!layer_dir.path().join("SKSE").exists());
+        assert!(!layer_dir.path().join(MANIFEST_FILENAME).exists());
     }
 
     #[test]

@@ -35,7 +35,7 @@ use cli::{
 use config::{load_global_config, resolve_config_dir, resolve_home_dir};
 use error::CliError;
 use peri_archive::{
-    compute_file_sha256, create_peca, extract_peca, generate_package_file_index,
+    compute_file_sha256, create_peca, extract_peca_layer, generate_package_file_index,
     load_package_vfi_cache, read_manifest_from_peca, save_package_vfi_cache,
 };
 use peri_core::{
@@ -560,7 +560,11 @@ async fn handle_sync(args: SyncArgs, ci_flags: &CiFlags) -> Result<(), CliError>
             let _unpack_enter = unpack_span.enter();
 
             let dest_layer = extracted_dir.join(&manifest.package.name);
-            extract_peca(peca_path, &dest_layer)?;
+            // Drop any previous extraction so remapped or removed files don't linger.
+            if dest_layer.exists() {
+                fs::remove_dir_all(&dest_layer).map_err(|e| CliError::Workspace(e.to_string()))?;
+            }
+            extract_peca_layer(peca_path, &dest_layer, |p| game_profile.map_path(p))?;
             println!(
                 "   Unpacked {} v{} -> {}",
                 manifest.package.name,
