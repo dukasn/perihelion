@@ -22,6 +22,7 @@
 
 pub mod config;
 pub mod draft;
+pub mod edit;
 pub mod error;
 pub mod graph;
 pub mod lockfile;
