@@ -390,6 +390,10 @@ impl RunnerPipeline {
                 policy = policy
                     .with_writable_path(proton.compat_data_path.clone())
                     .with_writable_path(proton.wine_prefix.clone());
+                // Proton writes dist.lock next to its own script.
+                if let Some(dir) = proton.runner.parent() {
+                    policy = policy.with_writable_path(dir.to_path_buf());
+                }
             }
             RunnerKind::Custom { .. } => {}
         }

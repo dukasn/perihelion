@@ -289,6 +289,96 @@ impl SandboxPolicy {
     }
 }
 
+/// Mounts that must stay writable for the process to function (devices, procfs, runtime sockets).
+const READONLY_EXEMPT_PREFIXES: [&str; 4] = ["/proc", "/sys", "/dev", "/run"];
+
+/// Parses `/proc/self/mountinfo` into `(mount point, per-mount flags, already read-only)`.
+fn parse_mountinfo(content: &str) -> Vec<(PathBuf, MsFlags, bool)> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let mount_point = unescape_mountinfo(fields.nth(4)?);
+            let options = fields.next()?;
+
+            let mut flags = MsFlags::empty();
+            let mut readonly = false;
+            for opt in options.split(',') {
+                match opt {
+                    "ro" => readonly = true,
+                    "nosuid" => flags |= MsFlags::MS_NOSUID,
+                    "nodev" => flags |= MsFlags::MS_NODEV,
+                    "noexec" => flags |= MsFlags::MS_NOEXEC,
+                    "noatime" => flags |= MsFlags::MS_NOATIME,
+                    "nodiratime" => flags |= MsFlags::MS_NODIRATIME,
+                    "relatime" => flags |= MsFlags::MS_RELATIME,
+                    _ => {}
+                }
+            }
+            Some((PathBuf::from(mount_point), flags, readonly))
+        })
+        .collect()
+}
+
+/// Decodes the `\040`-style octal escapes mountinfo uses for spaces and tabs in paths.
+fn unescape_mountinfo(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\'
+            && i + 3 < bytes.len()
+            && bytes[i + 1..i + 4].iter().all(u8::is_ascii_digit)
+        {
+            let value =
+                (bytes[i + 1] - b'0') * 64 + (bytes[i + 2] - b'0') * 8 + (bytes[i + 3] - b'0');
+            out.push(value);
+            i += 4;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Remounts every mount in the namespace read-only except exempt system mounts and `writable` trees.
+fn remount_all_readonly(writable: &[PathBuf]) {
+    let Ok(content) = fs::read_to_string("/proc/self/mountinfo") else {
+        warn!("Cannot read /proc/self/mountinfo; read-only root not enforced");
+        return;
+    };
+
+    let mut failed = 0usize;
+    for (path, flags, readonly) in parse_mountinfo(&content) {
+        let exempt = READONLY_EXEMPT_PREFIXES.iter().any(|p| path.starts_with(p))
+            || writable.iter().any(|w| path.starts_with(w));
+        if readonly || exempt {
+            continue;
+        }
+
+        // Locked mount flags must be re-specified or the kernel rejects the remount.
+        let result = mount(
+            None::<&str>,
+            path.as_path(),
+            None::<&str>,
+            MsFlags::MS_REMOUNT | MsFlags::MS_BIND | MsFlags::MS_RDONLY | flags,
+            None::<&str>,
+        );
+        if let Err(e) = result {
+            failed += 1;
+            debug!(mount = %path.display(), error = %e, "Could not remount read-only");
+        }
+    }
+
+    if failed > 0 {
+        warn!(
+            failed,
+            "Some mounts could not be made read-only (restricted by host environment)"
+        );
+    }
+}
+
 /// Applies Phase B execution boundary hardening:
 /// 1. Makes all mount events private to this isolated namespace.
 /// 2. Remounts the entire root filesystem as read-only.
@@ -351,19 +441,8 @@ fn apply_sandbox_policy(plan: &VfsPlan, policy: &SandboxPolicy) -> Result<(), Vf
             None::<&str>,
         );
 
-        // Remount root filesystem as read-only
-        if let Err(e) = mount(
-            Some("none"),
-            "/",
-            None::<&str>,
-            MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY | MsFlags::MS_REC,
-            None::<&str>,
-        ) {
-            warn!(
-                error = %e,
-                "Read-only root remount skipped (restricted by host/container environment); continuing with namespace sandboxing"
-            );
-        }
+        // MS_REC is ignored on remount, so every mount must be made read-only one by one.
+        remount_all_readonly(&writable);
 
         // Re-ensure whitelisted writable paths maintain read-write flags
         for path in &writable {
@@ -544,6 +623,21 @@ fn setup_id_mapping(uid: u32, gid: u32) -> Result<(), VfsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_mountinfo_flags_and_escapes() {
+        let info = "36 35 0:36 /home /var/home/my\\040games rw,nosuid,nodev,relatime shared:1 - btrfs /dev/x rw\n\
+                    40 35 0:40 / /proc ro,nosuid - proc proc rw\n";
+        let mounts = parse_mountinfo(info);
+        assert_eq!(mounts.len(), 2);
+        assert_eq!(mounts[0].0, PathBuf::from("/var/home/my games"));
+        assert_eq!(
+            mounts[0].1,
+            MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_RELATIME
+        );
+        assert!(!mounts[0].2);
+        assert!(mounts[1].2);
+    }
 
     #[test]
     fn test_vfs_plan_lowerdir_ordering() {
