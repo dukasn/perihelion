@@ -213,6 +213,7 @@ async fn handle_init(args: InitArgs) -> Result<(), CliError> {
                 game_id: args.game_id.clone(),
                 engine_version: None,
                 game_path: None,
+                executable: None,
             },
             assets: None,
             dependencies: Default::default(),
@@ -905,6 +906,7 @@ async fn handle_run(args: RunArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
     let mount_options = plan.format_mount_options()?;
     let exec_cmd = args
         .exec
+        .or(manifest.target.executable.clone())
         .or(profile.default_executable)
         .unwrap_or_else(|| "echo 'No executable configured'".to_string());
 
