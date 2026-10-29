@@ -108,6 +108,23 @@ pub enum Commands {
     )]
     Get(GetArgs),
 
+    /// Fetch a mod archive and declare it as a dependency in peri.toml
+    #[command(
+        about = "Fetch a mod archive and declare it as a dependency in peri.toml",
+        after_help = "EXAMPLES:\n  \
+                      peri add ./dist/skse64-2.2.6.peca\n  \
+                      peri add https://mods.example.com/skyui-5.2.0.peca --req \"^5.2\""
+    )]
+    Add(AddArgs),
+
+    /// Remove a dependency from peri.toml
+    #[command(
+        about = "Remove a dependency from peri.toml",
+        after_help = "EXAMPLES:\n  \
+                      peri remove skyui"
+    )]
+    Remove(RemoveArgs),
+
     /// Solve dependencies, verify checksums, and unpack missing layers
     #[command(
         about = "Solve dependencies, verify checksums, and unpack missing layers",
@@ -203,6 +220,44 @@ pub struct GetArgs {
         value_hint = ValueHint::FilePath
     )]
     pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct AddArgs {
+    /// URI (HTTP URL, Magnet link, or local path) of the .peca archive
+    #[arg(value_name = "URI", value_hint = ValueHint::AnyPath)]
+    pub uri: String,
+
+    /// Version requirement to record (defaults to ^<archive version>)
+    #[arg(long, value_name = "REQ")]
+    pub req: Option<String>,
+
+    /// Path to workspace root directory containing peri.toml
+    #[arg(
+        short,
+        long,
+        default_value = ".",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath
+    )]
+    pub workspace: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct RemoveArgs {
+    /// Name of the dependency to remove
+    #[arg(value_name = "NAME")]
+    pub name: String,
+
+    /// Path to workspace root directory containing peri.toml
+    #[arg(
+        short,
+        long,
+        default_value = ".",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath
+    )]
+    pub workspace: PathBuf,
 }
 
 #[derive(Debug, Args)]

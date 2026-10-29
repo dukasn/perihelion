@@ -202,7 +202,15 @@ peri get https://mods.example.com/texture_framework-1.0.0.peca
 peri get "magnet:?xt=urn:btih:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855&dn=texture_framework.peca"
 ```
 
-Declare dependencies in workspace `peri.toml`:
+`peri add` fetches a package and records it in `[dependencies]` in one step, keeping your comments and formatting. It defaults to `^<archive version>`; pass `--req` to choose another range, and use `peri remove <name>` to drop an entry:
+
+```bash
+peri add ./dist/high_res_terrain-1.2.0.peca
+peri add https://mods.example.com/texture_framework-1.0.0.peca --req ">=1.0"
+peri remove high_res_terrain
+```
+
+You can also edit the workspace `peri.toml` by hand:
 
 ```toml
 [package]

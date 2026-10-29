@@ -29,8 +29,8 @@ mod error;
 mod profile;
 
 use cli::{
-    CheckArgs, CiFlags, Cli, CliFormat, Commands, ConfigAction, ConfigArgs, GetArgs, InitArgs,
-    PackageArgs, RunArgs, SyncArgs,
+    AddArgs, CheckArgs, CiFlags, Cli, CliFormat, Commands, ConfigAction, ConfigArgs, GetArgs,
+    InitArgs, PackageArgs, RemoveArgs, RunArgs, SyncArgs,
 };
 use config::{load_global_config, resolve_config_dir, resolve_home_dir};
 use error::CliError;
@@ -95,6 +95,8 @@ async fn run_command(command: Commands, ci_flags: &CiFlags) -> Result<(), CliErr
     match command {
         Commands::Init(args) => handle_init(args).await,
         Commands::Get(args) => handle_get(args).await,
+        Commands::Add(args) => handle_add(args, ci_flags).await,
+        Commands::Remove(args) => handle_remove(args, ci_flags).await,
         Commands::Sync(args) => handle_sync(args, ci_flags).await,
         Commands::Package(args) => handle_package(args).await,
         Commands::Check(args) => handle_check(args, ci_flags).await,
@@ -309,15 +311,100 @@ async fn handle_get(args: GetArgs) -> Result<(), CliError> {
     let span = info_span!("get", uri = %args.uri);
     let _enter = span.enter();
 
-    let _global_config = load_global_config()?;
-    let cache_dir = Path::new(CACHE_MODS_DIR);
-    fs::create_dir_all(cache_dir).map_err(|e| CliError::Workspace(e.to_string()))?;
+    let (manifest, dest_file, files_indexed) =
+        fetch_into_cache(Path::new("."), &args.uri, args.output).await?;
 
-    let uri = &args.uri;
+    println!(
+        "Successfully cached mod '{}' v{} ({} files indexed) -> {}",
+        manifest.package.name,
+        manifest.package.version,
+        files_indexed,
+        dest_file.display()
+    );
+
+    Ok(())
+}
+
+fn refuse_manifest_edit_when_locked(ci_flags: &CiFlags) -> Result<(), CliError> {
+    if ci_flags.locked {
+        return Err(CliError::Workspace(format!(
+            "Cannot modify {MANIFEST_FILENAME} while --locked or --frozen is active"
+        )));
+    }
+    Ok(())
+}
+
+fn read_workspace_manifest(workspace: &Path) -> Result<(PathBuf, String), CliError> {
+    let path = workspace.join(MANIFEST_FILENAME);
+    if !path.exists() {
+        return Err(CliError::Workspace(format!(
+            "No {MANIFEST_FILENAME} found in {}. Run 'peri init <game_id>' first.",
+            workspace.display()
+        )));
+    }
+    let source = fs::read_to_string(&path).map_err(|e| CliError::Workspace(e.to_string()))?;
+    Ok((path, source))
+}
+
+async fn handle_add(args: AddArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
+    let workspace = validate_workspace_path(&args.workspace)?;
+    let span = info_span!("add", uri = %args.uri);
+    let _enter = span.enter();
+
+    refuse_manifest_edit_when_locked(ci_flags)?;
+    let (manifest_path, source) = read_workspace_manifest(&workspace)?;
+
+    let (package, _, _) = fetch_into_cache(&workspace, &args.uri, None).await?;
+    let name = package.package.name;
+    let req = args
+        .req
+        .unwrap_or_else(|| format!("^{}", package.package.version));
+
+    let updated = peri_core::edit::add_dependency(&source, &name, &req)?;
+    fs::write(&manifest_path, updated).map_err(|e| CliError::Workspace(e.to_string()))?;
+
+    println!("Added {name} = \"{req}\" to {MANIFEST_FILENAME}. Run 'peri sync' to apply it.");
+    Ok(())
+}
+
+async fn handle_remove(args: RemoveArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
+    let workspace = validate_workspace_path(&args.workspace)?;
+    let span = info_span!("remove", name = %args.name);
+    let _enter = span.enter();
+
+    refuse_manifest_edit_when_locked(ci_flags)?;
+    let (manifest_path, source) = read_workspace_manifest(&workspace)?;
+
+    let Some(updated) = peri_core::edit::remove_dependency(&source, &args.name)? else {
+        return Err(CliError::Workspace(format!(
+            "'{}' is not listed under [dependencies] in {MANIFEST_FILENAME}",
+            args.name
+        )));
+    };
+    fs::write(&manifest_path, updated).map_err(|e| CliError::Workspace(e.to_string()))?;
+
+    println!(
+        "Removed {} from {MANIFEST_FILENAME}. Run 'peri sync' to update the lockfile and layers.",
+        args.name
+    );
+    Ok(())
+}
+
+/// Fetches `uri` into the workspace package cache and indexes it.
+/// Returns the package manifest, the cached file, and the number of indexed files.
+async fn fetch_into_cache(
+    workspace: &Path,
+    uri: &str,
+    output: Option<PathBuf>,
+) -> Result<(Manifest, PathBuf, usize), CliError> {
+    let _global_config = load_global_config()?;
+    let cache_dir = workspace.join(CACHE_MODS_DIR);
+    fs::create_dir_all(&cache_dir).map_err(|e| CliError::Workspace(e.to_string()))?;
+
     let dest_file: PathBuf;
 
     if uri.starts_with("http://") || uri.starts_with("https://") {
-        let filename = args.output.unwrap_or_else(|| {
+        let filename = output.unwrap_or_else(|| {
             uri.split('/')
                 .next_back()
                 .filter(|s| !s.is_empty())
@@ -331,7 +418,7 @@ async fn handle_get(args: GetArgs) -> Result<(), CliError> {
         info!(url = %uri, "Downloading archive over HTTP");
         peri_net::fetch_http(uri, &dest_file, None).await?;
     } else if uri.starts_with("magnet:") {
-        let filename = args.output.unwrap_or_else(|| PathBuf::from("torrent.peca"));
+        let filename = output.unwrap_or_else(|| PathBuf::from("torrent.peca"));
         dest_file = cache_dir.join(filename);
         if let Some(home) = config::resolve_home_dir() {
             validate_safe_path(&dest_file, &home)?;
@@ -344,7 +431,7 @@ async fn handle_get(args: GetArgs) -> Result<(), CliError> {
         if !source_path.exists() {
             return Err(CliError::Archive(format!("Local file not found: {uri}")));
         }
-        let filename = args.output.unwrap_or_else(|| {
+        let filename = output.unwrap_or_else(|| {
             source_path
                 .file_name()
                 .map(PathBuf::from)
@@ -358,8 +445,8 @@ async fn handle_get(args: GetArgs) -> Result<(), CliError> {
     }
 
     let manifest = read_manifest_from_peca(&dest_file)?;
-    let vfi_cache_dir = Path::new(VFI_CACHE_DIR);
-    let index = load_or_cache_vfi(vfi_cache_dir, &dest_file, &manifest)?;
+    let vfi_cache_dir = workspace.join(VFI_CACHE_DIR);
+    let index = load_or_cache_vfi(&vfi_cache_dir, &dest_file, &manifest)?;
 
     debug!(
         mod_id = %manifest.package.name,
@@ -369,15 +456,7 @@ async fn handle_get(args: GetArgs) -> Result<(), CliError> {
         "Package successfully cached"
     );
 
-    println!(
-        "Successfully cached mod '{}' v{} ({} files indexed) -> {}",
-        manifest.package.name,
-        manifest.package.version,
-        index.files.len(),
-        dest_file.display()
-    );
-
-    Ok(())
+    Ok((manifest, dest_file, index.files.len()))
 }
 
 async fn handle_sync(args: SyncArgs, ci_flags: &CiFlags) -> Result<(), CliError> {
