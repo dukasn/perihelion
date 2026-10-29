@@ -38,7 +38,7 @@ Feature Branch (Conventional Commits)
              ▼
    Tag Push (`v*`)
              │
-             └──▶ 4. cargo-dist (`.github/workflows/release.yml`)
+             └──▶ 4. Publish Release (`.github/workflows/release.yml`)
                   ├── Compiles production binaries (`peri`, `helion`, `perid`)
                   ├── Builds release tarballs, installers, and SHA256 checksums
                   └── Publishes GitHub Release with assets and release notes
@@ -87,8 +87,8 @@ When active, any `feat:` commit on `0.1.1` automatically increments to `0.2.0`.
 Binary assets like preview GIFs (`assets/demos/*.gif`) cannot be auto-merged by git. To prevent race conditions and merge conflicts across automated runners, the CI architecture enforces these rules:
 
 1. **Zero Bot Pushes to `main`:** No GitHub Actions workflow pushes commits directly to `main`. All automated changes flow through pull requests.
-2. **PR Demo Ownership:** `.github/workflows/release-plz.yml` owns demo generation on the release PR branch. It builds the binaries, records the tapes, and commits visual updates to the PR before review.
-3. **Validation Isolation:** `.github/workflows/vhs.yml` runs only on feature pull requests touching `.tape` scripts. It uploads recordings as artifacts for maintainer review without writing back to the branch.
+2. **PR Demo Ownership:** `.github/workflows/prepare-release.yml` owns demo generation on the release PR branch. It builds the binaries, records the tapes, and commits visual updates to the PR before review.
+3. **Validation Isolation:** `.github/workflows/record-previews.yml` runs only on feature pull requests touching `.tape` scripts. It uploads recordings as artifacts for maintainer review without writing back to the branch.
 4. **Clean PR Diffs:** If recording tapes produce no visual diff against existing demos, the commit step skips execution, keeping PR history free of empty commits.
 
 ---

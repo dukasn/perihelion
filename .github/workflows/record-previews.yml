@@ -1,4 +1,4 @@
-name: VHS Terminal Previews
+name: Record Terminal Previews
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
       - 'assets/vhs/**'
       - 'docs/vhs/**'
       - 'scripts/record-demos.sh'
-      - '.github/workflows/vhs.yml'
+      - '.github/workflows/record-previews.yml'
 
 jobs:
   record-demos:
@@ -62,4 +62,3 @@ jobs:
           else
             echo "No visual demo changes detected."
           fi
-

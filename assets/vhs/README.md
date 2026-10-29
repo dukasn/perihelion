@@ -52,12 +52,11 @@ vhs assets/vhs/peri-quickstart.tape
 
 Terminal recordings are automatically kept in sync through GitHub Actions:
 
-1. **Release PR Integration (`.github/workflows/release-plz.yml`):**
+1. **Release preparation (`.github/workflows/prepare-release.yml`):**
    When `release-plz` creates or updates a release pull request, it compiles release binaries, runs `scripts/record-demos.sh`, and commits freshly generated GIFs to the release branch. Reviewing the release PR allows maintainers to visually inspect the recorded behavior before merging to `main`.
-2. **Pull Request Validation (`.github/workflows/vhs.yml`):**
+2. **Pull request previews (`.github/workflows/record-previews.yml`):**
    Runs whenever `.tape` files or recording scripts are modified in a feature PR. Builds binaries, compiles the recordings, and attaches the resulting GIFs as workflow artifacts (`vhs-terminal-previews`) for visual inspection before merging.
 3. **On-Demand Dispatch (`workflow_dispatch`):**
    Can be triggered manually from the GitHub Actions tab. With `commit_changes: true`, the workflow automatically commits the freshly rendered GIFs back to the target branch.
 4. **Local Generation via mise:**
    Run `mise run record` or `./scripts/record-demos.sh` locally to generate and commit updated GIFs directly in your feature branch before opening a PR.
-
