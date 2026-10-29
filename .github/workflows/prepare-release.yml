@@ -6,23 +6,28 @@ on:
 
 jobs:
   release-plz-release:
+    name: Publish release tag
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           # PAT/App token so the tag push triggers the cargo-dist release workflow.
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: release-plz/action@v0.5
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Create and push release tag
+        uses: release-plz/action@v0.5
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
   release-plz-pr:
+    name: Prepare release pull request and previews
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -31,19 +36,22 @@ jobs:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: release-plz/action@v0.5
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Open or update release pull request
+        uses: release-plz/action@v0.5
         id: release-plz
         with:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
-      - name: Setup sccache
+      - name: Set up sccache
         if: steps.release-plz.outputs.prs_created == 'true'
         uses: mozilla-actions/sccache-action@v0.0.9
 
@@ -51,13 +59,13 @@ jobs:
         if: steps.release-plz.outputs.prs_created == 'true'
         run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
 
-      - name: Setup VHS & Developer Fonts
+      - name: Install VHS and recording fonts
         if: steps.release-plz.outputs.prs_created == 'true'
         uses: charmbracelet/vhs-action@v2
         with:
           install-fonts: 'true'
 
-      - name: Record terminal demos and commit to release PR
+      - name: Record previews and update release pull request
         if: steps.release-plz.outputs.prs_created == 'true'
         env:
           PR_DATA: ${{ steps.release-plz.outputs.pr }}

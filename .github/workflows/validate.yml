@@ -11,40 +11,50 @@ env:
 
 jobs:
   test:
+    name: Check code quality and tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
       - name: Enable sccache
         run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
 
-      - name: License headers
+      - name: Check license headers
         run: python3 scripts/check_license_headers.py
 
-      - name: Format
+      - name: Check formatting
         run: cargo fmt --all --check
 
-      - name: Clippy
+      - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Test
+      - name: Run workspace tests
         run: cargo test --workspace
 
   deny:
+    name: Check licenses and dependency sources
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Check licenses, bans, and sources
+        uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check licenses bans sources
 
   advisories:
+    name: Check dependency security advisories
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Check Rust security advisories
+        uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories

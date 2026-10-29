@@ -16,12 +16,12 @@ on:
 
 jobs:
   record-demos:
-    name: Record Terminal Demos
+    name: Render terminal previews
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -29,28 +29,28 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Setup sccache
+      - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Enable sccache
         run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
 
-      - name: Setup VHS & Developer Fonts
+      - name: Install VHS and recording fonts
         uses: charmbracelet/vhs-action@v2
         with:
           install-fonts: 'true'
 
-      - name: Build binaries & record VHS tapes
+      - name: Build binaries and record previews
         run: |
           ./scripts/record-demos.sh
 
-      - name: Upload generated preview recordings
+      - name: Upload preview GIFs
         uses: actions/upload-artifact@v4
         with:
           name: vhs-terminal-previews
           path: assets/demos/*.gif
 
-      - name: Commit updated demos
+      - name: Commit preview GIFs to branch
         if: github.event_name == 'workflow_dispatch' && inputs.commit_changes
         run: |
           git config user.name "github-actions[bot]"
