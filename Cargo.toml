@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 rust-version = "1.80"
 authors = ["Eduardo Marques Santos", "Perihelion Contributors"]
@@ -21,11 +21,11 @@ publish = true
 
 [workspace.dependencies]
 # Internal domain and crates
-peri-core = { path = "common/peri-core", version = "0.1.3" }
-peri-vfs = { path = "crates/peri-vfs", version = "0.1.3" }
-peri-net = { path = "crates/peri-net", version = "0.1.3" }
-peri-archive = { path = "crates/peri-archive", version = "0.1.3" }
-helion = { path = "apps/helion", version = "0.1.3" }
+peri-core = { path = "common/peri-core", version = "0.1.4" }
+peri-vfs = { path = "crates/peri-vfs", version = "0.1.4" }
+peri-net = { path = "crates/peri-net", version = "0.1.4" }
+peri-archive = { path = "crates/peri-archive", version = "0.1.4" }
+helion = { path = "apps/helion", version = "0.1.4" }
 
 # Serialization & Manifest parsing
 serde = { version = "1.0", features = ["derive"] }

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/dukasn/perihelion/compare/v0.1.3...v0.1.4) - 2026-10-29
+
+### Added
+
+- *(core,cli)* add peri add and peri remove for dependency management ([#18](https://github.com/dukasn/perihelion/pull/18))
+- *(core,cli)* add [target] executable as a workspace default for peri run ([#17](https://github.com/dukasn/perihelion/pull/17))
+- *(core,cli)* record and verify archive checksums in peri.lock
+
+### Fixed
+
+- *(cli,core)* fail on invalid global config instead of silently using defaults ([#14](https://github.com/dukasn/perihelion/pull/14))
+
 ## [0.1.3](https://github.com/dukasn/perihelion/compare/v0.1.2...v0.1.3) - 2026-10-28
 
 ### Added

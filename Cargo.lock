@@ -1229,7 +1229,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "helion"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "clap",
  "crossterm",
@@ -2535,7 +2535,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "peri-archive"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "hex",
  "peri-core",
@@ -2550,7 +2550,7 @@ dependencies = [
 
 [[package]]
 name = "peri-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "hex",
  "miette",
@@ -2568,7 +2568,7 @@ dependencies = [
 
 [[package]]
 name = "peri-net"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bytes",
  "futures-util",
@@ -2587,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "peri-vfs"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "nix 0.31.3",
  "peri-core",
@@ -2598,7 +2598,7 @@ dependencies = [
 
 [[package]]
 name = "perihelion"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "clap",
  "crossterm",
