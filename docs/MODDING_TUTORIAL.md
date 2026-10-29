@@ -285,6 +285,14 @@ Or override binaries and arguments on the fly:
 peri run --exec bin/custom_launcher.exe -- --skip-intro +exec autoexec.cfg
 ```
 
+To avoid repeating `--exec`, set a default for the workspace in `peri.toml`. The order is `--exec`, then `[target] executable`, then the profile's default:
+
+```toml
+[target]
+game_id = "<game_id>"
+executable = "bin/custom_launcher.exe"
+```
+
 ---
 
 ## 3. Practical Walkthrough: Skyrim Special Edition

@@ -89,6 +89,9 @@ pub struct TargetGame {
     pub engine_version: Option<String>,
     #[serde(default, alias = "base_path")]
     pub game_path: Option<PathBuf>,
+    /// Executable `peri run` launches by default, overriding the game profile's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable: Option<String>,
 }
 
 impl TargetGame {
@@ -97,6 +100,7 @@ impl TargetGame {
             game_id: game_id.into(),
             engine_version: None,
             game_path: None,
+            executable: None,
         }
     }
 }
@@ -151,6 +155,7 @@ struct RawTargetGame {
     engine_version: Option<Spanned<String>>,
     #[serde(alias = "base_path")]
     game_path: Option<PathBuf>,
+    executable: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -296,6 +301,7 @@ impl Manifest {
             game_id,
             engine_version,
             game_path: raw_target.game_path,
+            executable: raw_target.executable,
         };
 
         // 3. Validate [dependencies]
@@ -389,6 +395,33 @@ impl Manifest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_target_executable_roundtrip() {
+        let sample = r#"
+[package]
+name = "Modpack"
+author = "Player"
+version = "0.1.0"
+
+[target]
+game_id = "skyrim_se"
+executable = "skse64_loader.exe"
+"#;
+        let manifest = Manifest::from_toml_str(sample).unwrap();
+        assert_eq!(
+            manifest.target.executable.as_deref(),
+            Some("skse64_loader.exe")
+        );
+
+        let reparsed = Manifest::from_toml_str(&manifest.to_toml_str().unwrap()).unwrap();
+        assert_eq!(reparsed.target.executable, manifest.target.executable);
+
+        let without = sample.replace("executable = \"skse64_loader.exe\"\n", "");
+        let plain = Manifest::from_toml_str(&without).unwrap();
+        assert!(plain.target.executable.is_none());
+        assert!(!plain.to_toml_str().unwrap().contains("executable"));
+    }
 
     #[test]
     fn test_parse_valid_manifest() {
